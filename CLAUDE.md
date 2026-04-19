@@ -1,0 +1,149 @@
+# CLAUDE.md
+
+이 파일은 Claude Code가 이 저장소에서 작업할 때 자동으로 참조하는 프로젝트 가이드입니다.
+
+## 프로젝트 한 줄 정의
+
+**해외축구 팬을 위한 개인화 경기 큐레이션 서비스.** "오늘 볼 경기 하나", 왜 봐야 하는지, 무엇을 볼지, 끝난 뒤 빠르게 따라잡기.
+
+## 반드시 지킬 원칙
+
+1. **기능 욕심 금지.** 핵심 경험(오늘의 경기 1개 추천 + 이유 + 관전 포인트 + 5줄 요약)을 벗어난 추가 기능은 먼저 제안하고 승인받은 뒤 구현.
+2. **단순함 > 추상화.** 과도한 추상화·레이어·디자인 패턴은 피한다. 3줄의 반복이 조기 추상화보다 낫다.
+3. **데이터와 설명의 분리.**
+   - **데이터·순위·점수 계산 = 코드** (`src/services/recommendation.ts` 등 순수 함수)
+   - **설명·내러티브·요약 = LLM** (`src/services/llm.ts`)
+   - LLM은 절대 경기 데이터나 순위를 만들지 않는다. Claude가 반환한 숫자는 신뢰하지 않는다.
+4. **Mock 우선, 실데이터는 플래그.** `.env`의 `USE_MOCK`로 mock/real을 토글. 새 외부 의존성은 mock 폴백이 가능해야 한다.
+5. **캐시는 AI 성공 시에만.** `content.ts`는 AI가 실패하면 폴백 결과를 DB에 저장하지 않는다 (`match_contents` 오염 방지).
+6. **로그인 필수, 로컬 저장 없음.** 모든 사용자 데이터는 `user_id` 기준으로 DB에 저장.
+
+## 기술 스택 (확정)
+
+- **Next.js 14** App Router + TypeScript
+- **Tailwind CSS** (커스텀 다크 팔레트 + Fraunces/Instrument Sans/JetBrains Mono)
+- **Supabase** (Auth — Google OAuth만, Postgres)
+- **Prisma** ORM (Drizzle 사용 금지)
+- **Zod v4** validation (Anthropic SDK의 `zodOutputFormat`은 v4 필수)
+- **Anthropic SDK** (`@anthropic-ai/sdk`) — 기본 모델 `claude-sonnet-4-6`, 고품질 필요 시 `claude-opus-4-7`
+- **football-data.org** v4 (무료 티어, 분당 10회 제한)
+
+## 아키텍처 맵
+
+```
+src/
+├── app/                     # Next App Router
+│   ├── page.tsx             # 홈 — 오늘 1개 + 보조 3개 + 최근 종료 3개
+│   ├── matches/[id]/        # 상세 — 이유/관전포인트/요약
+│   ├── settings/            # 선호 편집
+│   ├── login/               # Google OAuth 진입점
+│   ├── auth/callback/       # Supabase OAuth 콜백
+│   ├── api/                 # REST 엔드포인트 (me, today, matches, preferences)
+│   ├── opengraph-image.tsx  # 동적 OG 이미지 (1200×630)
+│   ├── icon.svg             # favicon
+│   └── loading.tsx          # 스켈레톤
+├── components/              # UI (MatchHero, TeamCrest, Skeleton 등)
+├── services/                # 비즈니스 로직
+│   ├── recommendation.ts    # 순수 함수 점수 계산 (절대 LLM 호출 금지)
+│   ├── matches.ts           # getTodaysMatches / getMatchById / getRecentFinishedMatches
+│   ├── football-data.ts     # 실 API 어댑터
+│   ├── football-data-context.ts  # 폼/순위/H2H 확장 컨텍스트
+│   ├── llm.ts               # Claude API 호출 + 시스템 프롬프트 + Zod 구조화 출력
+│   └── content.ts           # LLM 결과 DB 캐싱 (폴백은 캐시하지 않음)
+├── lib/                     # supabase 클라이언트, prisma, auth, validation, mock/
+├── middleware.ts            # 비인증 사용자 /login 리다이렉트
+└── types/                   # 도메인 타입 (MatchDTO, TeamDTO 등)
+
+prisma/schema.prisma         # User, UserPreference, MatchContent (Match/Team은 외부 API에 위임)
+```
+
+## 데이터 플로우
+
+1. **페이지 요청** → `requireUser()` (auth.ts) → 세션 있으면 Prisma에 upsert, 없으면 /login 리다이렉트.
+2. **오늘 경기 조회** → `getTodaysMatches()` → `USE_MOCK` 분기 → football-data.org 또는 mock.
+3. **추천 점수** → `rankMatches(matches, prefs)` → 중요도·인기·폼·스타일·선호 가중합 → 상위 1개/3개 분리.
+4. **AI 컨텐츠** → `getReasons(match)` / `getWatchPoints(match)` / `getSummary(match)`:
+   - `match_contents` 테이블 캐시 확인 → 있으면 즉시 반환
+   - 없으면 `enrichMatchContext(match)`로 폼·순위·H2H 수집 → `generateReasons` (Claude API + Zod) 호출
+   - 성공 시에만 DB upsert, 실패 시 폴백 템플릿만 반환 (캐시 X)
+5. **응답** → 서버 컴포넌트 렌더.
+
+## 추천 점수 공식 (recommendation.ts)
+
+```
+score = 중요도(0.35) + 인기도(0.20) + 최근 폼(0.15) + 스타일 충돌(0.10) + 사용자 선호(0.20)
+```
+
+가중치는 상수. 바꾸려면 사전 논의.
+
+## 환경 변수 (.env)
+
+| 변수 | 용도 | 필수 |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` / `..._ANON_KEY` | Supabase 클라이언트 | ✅ |
+| `SUPABASE_SERVICE_ROLE_KEY` | 서버 전용 | ⚠️ 신중히 |
+| `DATABASE_URL` / `DIRECT_URL` | Prisma (pooler 6543/5432) | ✅ |
+| `FOOTBALL_DATA_API_KEY` | 32자 hex | ✅ (USE_MOCK=false 시) |
+| `ANTHROPIC_API_KEY` | Claude | ✅ (AI 생성 시) |
+| `ANTHROPIC_MODEL` | 기본 `claude-sonnet-4-6`, 고품질 `claude-opus-4-7` | ✅ |
+| `ENABLE_WEB_SEARCH` | `true`면 AI가 부상/라인업 웹 검색 (경기당 최대 3회) | — |
+| `USE_MOCK` | `true`면 외부 API 스킵, mock 데이터 사용 | ✅ |
+| `NEXT_PUBLIC_SITE_URL` | OG 이미지 절대경로 (카카오 공유에 필수) | 프로덕션 필수 |
+
+## 주요 명령어
+
+```bash
+npm run dev              # 개발 서버
+npm run build            # 프로덕션 빌드
+npm run db:push          # prisma schema 반영 (dotenv로 .env.local 로드)
+npm run db:studio        # Prisma Studio (테이블 뷰어)
+```
+
+## 자주 겪는 이슈 & 대응
+
+- **Supabase P1001 (DB 접속 불가)**: 직통 호스트(`db.xxx.supabase.co`)는 IPv6 전용 → 국내 ISP에서 차단. **반드시 pooler 호스트(`aws-1-<region>.pooler.supabase.com`)** 사용. 유저명은 `postgres.<project_ref>` 형식.
+- **Prisma가 `.env.local`을 못 읽음**: Prisma CLI는 기본 `.env`만 로드. 그래서 DB 변수는 `.env`에 둠. 다른 경로 쓰려면 `dotenv -e` 프리픽스.
+- **특수문자 DB 비밀번호**: `!` → `%21` URL 인코딩.
+- **`match_contents`에 폴백 캐시됨**: 폴백 결과는 DB 저장 안 됨 (content.ts의 보호). 과거에 저장된 게 있으면 `DELETE FROM match_contents`.
+- **Claude `PARSE_FAILED`**: `max_tokens`가 너무 작거나 `thinking` 과다 사용. 현재 설정은 4096 토큰, thinking 미사용.
+- **Zod v3/v4 혼용 시 `Cannot read properties of undefined (reading 'def')`**: `zodOutputFormat`은 v4 필수. `package.json`에서 `zod: ^4.0.0` 고정.
+- **React "Invalid hook call"**: 거의 항상 `.next` 빌드 캐시 꼬임. `rm -rf .next && npm run dev`.
+- **OG 이미지가 카카오에서 안 뜸**: `NEXT_PUBLIC_SITE_URL`이 localhost면 크롤러가 접근 못 함. 프로덕션 도메인으로 바꾸고 카카오 캐시 초기화.
+- **football-data 429 rate limit**: 무료 티어 분당 10회. Next fetch `revalidate`가 완화하지만 동시 접속 많으면 터짐.
+
+## AI 컨텐츠 생성 (llm.ts)
+
+- **모델**: env `ANTHROPIC_MODEL` (기본 Sonnet 4.6).
+- **구조화 출력**: `client.messages.parse()` + `zodOutputFormat(schema)`. 파싱 실패 시 throw.
+- **시스템 프롬프트**: 한글 문체 가이드 + 데이터 활용 지침 + 금기(승부 단정·클리셰·이모지). `cache_control` 붙어있음 — 수정 시 프롬프트 캐시 무효화됨.
+- **web_search 도구**: `ENABLE_WEB_SEARCH=true`면 Claude가 부상/라인업/최근 전술을 웹에서 직접 검색.
+- **Thinking 끔**: 단순 작성 작업이라 adaptive thinking은 토큰만 낭비 → 비활성.
+
+## UI 컨벤션
+
+- **모바일 퍼스트.** 모든 페이지는 `max-w-screen-sm`.
+- **다크 테마 고정.** 팔레트: `bg/surface/elevated/border/ink` + 단일 액센트 `#D4FF4A`.
+- **타이포**: `font-display` = Fraunces (세리프), `font-sans` = Instrument Sans (본문), `font-mono` = JetBrains Mono (라벨·숫자).
+- **애니메이션**: `.rise` + `.rise-{n}` 스태거(50ms~450ms 간격).
+- **좁은 폭 주의**: flex 3-column 레이아웃은 피하기. 팀명처럼 가변 길이 텍스트는 `min-w-0 flex-1 break-keep` + `shrink-0` 고정 요소 조합.
+- **컴포넌트가 Link를 쓰면 서버 컴포넌트로 충분.** 클라이언트 훅(useState, useEffect 등)이 없으면 `"use client"` 붙이지 말 것.
+- **프론트엔드 디자인 작업 시**: `frontend-design:frontend-design` skill을 사용해 편집적/브루탈리즘 스포츠 매거진 느낌을 유지.
+
+## 하지 말 것
+
+- LLM이 경기 데이터·순위·결과를 만들게 하지 말 것.
+- `recommendation.ts`에서 Claude 호출 금지 (순수 함수 유지).
+- Mock 데이터에 의존하는 코드를 프로덕션 경로에 남기지 말 것 (USE_MOCK 분기만 허용).
+- `.env` / `.env.local`을 커밋하지 말 것 (`.gitignore`에 포함).
+- Match/Team 테이블을 부활시키지 말 것 — 외부 API에 위임한다는 결정은 의도된 것 (MatchContent만 DB).
+- 무의미한 주석(변수명이 이미 말해주는 것) 추가 금지. 왜(Why)만 주석.
+- 일반적인 에러 바운더리·try/catch 남발 금지. 시스템 경계(외부 API, 외부 DB)에서만 방어적으로.
+
+## 배포 전 체크리스트
+
+- [ ] `.env`의 `NEXT_PUBLIC_SITE_URL`을 실 도메인으로
+- [ ] Supabase Authentication → Google OAuth provider에 프로덕션 콜백 URL 등록 (`{domain}/auth/callback`)
+- [ ] Google Cloud Console OAuth 동의 화면 & 승인된 리디렉션 URI 업데이트
+- [ ] `npx prisma db push` 프로덕션 DB 반영
+- [ ] `USE_MOCK=false` 확인
+- [ ] 카카오 OG 캐시 초기화 ([developers.kakao.com/tool/clear/og](https://developers.kakao.com/tool/clear/og))

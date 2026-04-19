@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { TopBar } from "@/components/ui/TopBar";
@@ -8,6 +9,63 @@ import { getMatchById } from "@/services/matches";
 import { getReasons, getSummary, getWatchPoints } from "@/services/content";
 
 export const dynamic = "force-dynamic";
+
+const LEAGUE_KO: Record<string, string> = {
+  PL: "프리미어리그",
+  PD: "라리가",
+  BL1: "분데스리가",
+  SA: "세리에A",
+  FL1: "리그1",
+  CL: "챔피언스리그",
+};
+
+export async function generateMetadata({
+  params,
+}: {
+  params: { id: string };
+}): Promise<Metadata> {
+  const match = await getMatchById(params.id);
+  if (!match) {
+    return { title: "경기를 찾을 수 없습니다" };
+  }
+
+  const home = match.homeTeam.shortName ?? match.homeTeam.name;
+  const away = match.awayTeam.shortName ?? match.awayTeam.name;
+  const league = LEAGUE_KO[match.leagueCode] ?? match.leagueCode;
+  const kickoff = new Date(match.kickoffAt).toLocaleString("ko-KR", {
+    timeZone: "Asia/Seoul",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const title = `${home} vs ${away}`;
+  const description =
+    match.status === "FINISHED"
+      ? `${league} · 최종 ${match.homeScore}-${match.awayScore} · 5줄 요약 보기`
+      : `${league} · ${kickoff} 킥오프 · 왜 봐야 하는지, 무엇을 볼지.`;
+
+  const ogPath = `/matches/${params.id}/opengraph-image`;
+
+  return {
+    title,
+    description,
+    openGraph: {
+      title: `${title} · realsoccer`,
+      description,
+      type: "article",
+      url: `/matches/${params.id}`,
+      images: [{ url: ogPath, width: 1200, height: 630, alt: title }],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: `${title} · realsoccer`,
+      description,
+      images: [ogPath],
+    },
+  };
+}
 
 export default async function MatchDetailPage({
   params,

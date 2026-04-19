@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import type { MatchDTO } from "@/types";
+import { enrichMatchContext } from "./football-data-context";
 
 // 기본 모델은 Sonnet 4.6. 품질 최상위가 필요하면 .env에 ANTHROPIC_MODEL=claude-opus-4-7.
 const MODEL = process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-6";
@@ -45,10 +46,26 @@ const SYSTEM_PROMPT = `당신은 한국어로 글을 쓰는 해외축구 전문 
 3) 5줄 요약 (lines) — 종료된 경기만. 시간 순서대로 5문장.
    · 전반 흐름 → 결정적 장면 → 후반 변화 → 교체/전술 변화 → 결과 확정 순서 권장.
 
+[제공되는 데이터]
+- [기본 경기 정보]: 팀, 리그, 킥오프, 인기도, 스타일 라벨
+- [최근 폼]: 두 팀의 최근 5경기 (상대/홈원정/결과/스코어/대회)
+- [리그 순위 현황]: 현재 리그 순위·승점·득실
+- [상대 전적]: 두 팀의 과거 맞대결 집계 및 최근 3경기
+* 위 섹션 중 일부가 비어 있을 수 있음. 없는 데이터는 없다고 간주하고 지어내지 말 것.
+
+[데이터 활용 지침]
+- 제공된 데이터에 근거한 구체적 내러티브를 우선. 예:
+  · 최근 폼에서 홈팀이 3연패 → "침체 탈출을 위한 반등 기회"
+  · 순위표에서 두 팀 승점 차 2점 → "순위 싸움의 분수령"
+  · 최근 맞대결 홈팀 연승 → "반복되는 징크스에 맞설 원정팀"
+- 숫자 인용 시 위 데이터에서 직접 가져온 값만 사용 (승수·승점·순위·스코어).
+- 데이터에 없는 사실(부상자, 예상 라인업, 감독의 최근 인터뷰, 최신 전술 변화)은 web_search 도구로 최신 정보를 확인할 수 있음. 확인 안 된 사실은 쓰지 말 것.
+- 학습 데이터(선수·팀·감독에 대한 일반 지식)는 참고 가능하나 최근 이적·감독 교체 등 시점에 민감한 사실은 web_search로 검증 권장.
+
 [공통]
-- 근거가 없는 수치/사실을 만들지 말 것.
-- 제공된 경기 데이터(팀·리그·폼·스타일)만 활용.
-- 각 문장은 완성된 문장으로. 키워드 나열 금지.`;
+- 각 문장은 완성된 문장으로. 키워드 나열 금지.
+- 같은 각도의 반복 금지 (reasons 3개는 서로 다른 렌즈).
+- 제공 컨텍스트가 부족해도 당황하지 말고 일반적이되 진실한 서술로 갈 것.`;
 
 // 출력 스키마 — 숫자/길이 제약은 SDK가 클라이언트 측에서 검증한다 (API에는 전달 X).
 const ReasonsSchema = z.object({
@@ -109,6 +126,22 @@ async function callWithSchema<T extends z.ZodTypeAny>(
   const client = getClient();
   if (!client) throw new Error("ANTHROPIC_API_KEY_MISSING");
 
+  // football-data.org에서 폼·순위·H2H를 병렬로 가져온다. 실패해도 빈 문자열.
+  const context = await enrichMatchContext(match).catch((err) => {
+    console.warn("[llm] enrichMatchContext failed (continuing without)", err);
+    return "";
+  });
+
+  const userContent = [
+    task,
+    "",
+    "[기본 경기 정보]",
+    brief(match),
+    ...(context ? ["", context] : []),
+  ].join("\n");
+
+  const enableWebSearch = process.env.ENABLE_WEB_SEARCH !== "false";
+
   const response = await client.messages.parse({
     model: MODEL,
     max_tokens: 4096,
@@ -119,13 +152,19 @@ async function callWithSchema<T extends z.ZodTypeAny>(
         cache_control: { type: "ephemeral" },
       },
     ],
-    messages: [
-      {
-        role: "user",
-        content: `${task}\n\n[경기 정보]\n${brief(match)}`,
-      },
-    ],
+    messages: [{ role: "user", content: userContent }],
     output_config: { format: zodOutputFormat(schema) },
+    ...(enableWebSearch
+      ? {
+          tools: [
+            {
+              type: "web_search_20260209",
+              name: "web_search",
+              max_uses: 3,
+            },
+          ],
+        }
+      : {}),
   });
 
   if (!response.parsed_output) {

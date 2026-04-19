@@ -10,6 +10,7 @@ import {
   ensureWatchPoints,
   type EnsureResult,
 } from "@/services/content";
+import { upsertMatches } from "@/services/matches-db";
 
 // Hobby 플랜 함수 타임아웃 상한 (60초)
 export const maxDuration = 60;
@@ -45,6 +46,7 @@ export async function GET(req: Request) {
 
   const startedAt = Date.now();
   const report: {
+    upserted: { upcoming: number; finished: number };
     recommendations: {
       picked: number;
       reason: Record<string, number>;
@@ -53,14 +55,17 @@ export async function GET(req: Request) {
     summaries: { picked: number; summary: Record<string, number> };
     durationMs: number;
   } = {
+    upserted: { upcoming: 0, finished: 0 },
     recommendations: { picked: 0, reason: {}, watchPoints: {} },
     summaries: { picked: 0, summary: {} },
     durationMs: 0,
   };
 
-  // --- Part A: 추천 경기 사전 생성 (7일 윈도우 → 상위 N개 → reason + watch_points) ---
+  // --- Part A: 7일 윈도우 전 경기를 DB에 sync + 상위 N개만 AI 사전 생성 ---
   try {
     const upcoming = await fetchUpcomingMatches(UPCOMING_DAYS);
+    report.upserted.upcoming = await upsertMatches(upcoming);
+
     const topMatches = rankMatches(upcoming)
       .slice(0, TOP_N)
       .map((r) => r.match);
@@ -79,9 +84,11 @@ export async function GET(req: Request) {
     console.error("[cron] recommendations phase failed", err);
   }
 
-  // --- Part B: 종료 경기 summary 생성 ---
+  // --- Part B: 최근 종료 경기 sync + summary 생성 ---
   try {
     const finished = await fetchRecentFinishedMatches(FINISHED_LOOKBACK_DAYS);
+    report.upserted.finished = await upsertMatches(finished);
+
     const onlyFinished = finished.filter((m) => m.status === "FINISHED");
     report.summaries.picked = onlyFinished.length;
 

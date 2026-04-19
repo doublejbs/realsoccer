@@ -17,6 +17,7 @@
 4. **Mock 우선, 실데이터는 플래그.** `.env`의 `USE_MOCK`로 mock/real을 토글. 새 외부 의존성은 mock 폴백이 가능해야 한다.
 5. **캐시는 AI 성공 시에만.** `content.ts`는 AI가 실패하면 폴백 결과를 DB에 저장하지 않는다 (`match_contents` 오염 방지).
 6. **로그인 필수, 로컬 저장 없음.** 모든 사용자 데이터는 `user_id` 기준으로 DB에 저장.
+7. **외부 API 호출은 cron 전용.** 유저 요청은 DB(`matches`, `match_contents`)만 읽는다. football-data.org와 Anthropic API는 `/api/cron/refresh`(daily)에서만 호출. live match 스코어는 최대 24h 지연 — 수용된 트레이드오프.
 
 ## 기술 스택 (확정)
 
@@ -45,28 +46,36 @@ src/
 ├── components/              # UI (MatchHero, TeamCrest, Skeleton 등)
 ├── services/                # 비즈니스 로직
 │   ├── recommendation.ts    # 순수 함수 점수 계산 (절대 LLM 호출 금지)
-│   ├── matches.ts           # getTodaysMatches / getMatchById / getRecentFinishedMatches
-│   ├── football-data.ts     # 실 API 어댑터
-│   ├── football-data-context.ts  # 폼/순위/H2H 확장 컨텍스트
-│   ├── llm.ts               # Claude API 호출 + 시스템 프롬프트 + Zod 구조화 출력
-│   └── content.ts           # LLM 결과 DB 캐싱 (폴백은 캐시하지 않음)
+│   ├── matches.ts           # 유저 facade — DB 조회 (+ USE_MOCK 분기)
+│   ├── matches-db.ts        # Prisma 전용 — upsertMatches / find*
+│   ├── football-data.ts     # 외부 API 어댑터 (cron에서만 호출)
+│   ├── football-data-context.ts  # 폼/순위/H2H 확장 컨텍스트 (cron에서만)
+│   ├── llm.ts               # Claude API 호출 (cron에서만)
+│   └── content.ts           # get*=DB 읽기 전용 / ensure*=cron 전용 AI 생성
+├── app/api/cron/refresh/    # Vercel Cron 매일 — match sync + AI 사전 생성
 ├── lib/                     # supabase 클라이언트, prisma, auth, validation, mock/
 ├── middleware.ts            # 비인증 사용자 /login 리다이렉트
 └── types/                   # 도메인 타입 (MatchDTO, TeamDTO 등)
 
-prisma/schema.prisma         # User, UserPreference, MatchContent (Match/Team은 외부 API에 위임)
+prisma/schema.prisma         # User, UserPreference, Match, MatchContent
 ```
 
 ## 데이터 플로우
 
+### 유저 요청 경로 (외부 API 호출 0번)
+
 1. **페이지 요청** → `requireUser()` (auth.ts) → 세션 있으면 Prisma에 upsert, 없으면 /login 리다이렉트.
-2. **오늘 경기 조회** → `getTodaysMatches()` → `USE_MOCK` 분기 → football-data.org 또는 mock.
+2. **오늘 경기 조회** → `getTodaysMatches()` → `matches-db.findTodaysMatches()` → Postgres `matches` 테이블 select. `USE_MOCK=true`일 때만 mock.
 3. **추천 점수** → `rankMatches(matches, prefs)` → 중요도·인기·폼·스타일·선호 가중합 → 상위 1개/3개 분리.
-4. **AI 컨텐츠** → `getReasons(match)` / `getWatchPoints(match)` / `getSummary(match)`:
-   - `match_contents` 테이블 캐시 확인 → 있으면 즉시 반환
-   - 없으면 `enrichMatchContext(match)`로 폼·순위·H2H 수집 → `generateReasons` (Claude API + Zod) 호출
-   - 성공 시에만 DB upsert, 실패 시 폴백 템플릿만 반환 (캐시 X)
+4. **AI 컨텐츠 조회** → `getReasons/getWatchPoints/getSummary` → `match_contents` 테이블 select. 없으면 fallback 문구 반환 (Claude 호출 X).
 5. **응답** → 서버 컴포넌트 렌더.
+
+### Cron 경로 (매일 06:00 KST, `/api/cron/refresh`)
+
+1. `fetchUpcomingMatches(7)` football-data 호출 → `upsertMatches()`로 `matches` 테이블 sync.
+2. `rankMatches`로 상위 10개 선정 → `ensureReasons/ensureWatchPoints` (skip-if-cached) → Claude 생성 → `match_contents` upsert.
+3. `fetchRecentFinishedMatches(2)` football-data 호출 → `upsertMatches()`로 sync → `ensureSummary` (`status==FINISHED`만).
+4. Authorization: `Bearer $CRON_SECRET` 검증.
 
 ## 추천 점수 공식 (recommendation.ts)
 
@@ -89,6 +98,7 @@ score = 중요도(0.35) + 인기도(0.20) + 최근 폼(0.15) + 스타일 충돌(
 | `ENABLE_WEB_SEARCH` | `true`면 AI가 부상/라인업 웹 검색 (경기당 최대 3회) | — |
 | `USE_MOCK` | `true`면 외부 API 스킵, mock 데이터 사용 | ✅ |
 | `NEXT_PUBLIC_SITE_URL` | OG 이미지 절대경로 (카카오 공유에 필수) | 프로덕션 필수 |
+| `CRON_SECRET` | `/api/cron/refresh` 인증. Vercel Cron이 Bearer 헤더로 전달 | ✅ |
 
 ## 주요 명령어
 
@@ -135,7 +145,7 @@ npm run db:studio        # Prisma Studio (테이블 뷰어)
 - `recommendation.ts`에서 Claude 호출 금지 (순수 함수 유지).
 - Mock 데이터에 의존하는 코드를 프로덕션 경로에 남기지 말 것 (USE_MOCK 분기만 허용).
 - `.env` / `.env.local`을 커밋하지 말 것 (`.gitignore`에 포함).
-- Match/Team 테이블을 부활시키지 말 것 — 외부 API에 위임한다는 결정은 의도된 것 (MatchContent만 DB).
+- 유저 요청 경로에서 외부 API(football-data, Anthropic) 호출 금지 — 반드시 DB를 통해서만. 외부 호출은 `/api/cron/refresh`에서만.
 - 무의미한 주석(변수명이 이미 말해주는 것) 추가 금지. 왜(Why)만 주석.
 - 일반적인 에러 바운더리·try/catch 남발 금지. 시스템 경계(외부 API, 외부 DB)에서만 방어적으로.
 
@@ -146,4 +156,7 @@ npm run db:studio        # Prisma Studio (테이블 뷰어)
 - [ ] Google Cloud Console OAuth 동의 화면 & 승인된 리디렉션 URI 업데이트
 - [ ] `npx prisma db push` 프로덕션 DB 반영
 - [ ] `USE_MOCK=false` 확인
+- [ ] Vercel Environment Variables에 `CRON_SECRET` 등록
+- [ ] Vercel Dashboard → Crons에서 `/api/cron/refresh` 스케줄 확인 (`0 21 * * *`)
+- [ ] 첫 배포 후 `curl -H "Authorization: Bearer $CRON_SECRET" {domain}/api/cron/refresh` 수동 1회 실행 (DB 프리워밍)
 - [ ] 카카오 OG 캐시 초기화 ([developers.kakao.com/tool/clear/og](https://developers.kakao.com/tool/clear/og))

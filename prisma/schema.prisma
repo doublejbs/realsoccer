@@ -34,7 +34,25 @@ model UserPreference {
   @@map("user_preferences")
 }
 
-// 매치 데이터는 football-data.org 에서 가져오므로 DB에 저장하지 않는다.
+// 매치 데이터는 cron이 football-data.org에서 주기 동기화해 DB에 캐시.
+// 유저 요청은 DB만 읽고 외부 API를 호출하지 않는다.
+model Match {
+  id         String   @id                  // external(football-data.org) match id
+  leagueCode String   @map("league_code")
+  kickoffAt  DateTime @map("kickoff_at")
+  status     String
+  homeScore  Int?     @map("home_score")
+  awayScore  Int?     @map("away_score")
+  homeTeam   Json     @map("home_team")    // TeamDTO JSON
+  awayTeam   Json     @map("away_team")
+  importance Int
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([kickoffAt])
+  @@index([status])
+  @@map("matches")
+}
+
 // match_id는 외부 매치 ID 문자열 (football-data.org 숫자 ID 또는 mock ID).
 model MatchContent {
   id        String   @id @default(cuid())

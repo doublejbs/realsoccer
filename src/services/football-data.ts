@@ -96,26 +96,6 @@ function mapMatch(m: FDMatch): MatchDTO {
   };
 }
 
-export async function fetchTodaysMatches(): Promise<MatchDTO[]> {
-  const now = new Date();
-  // 36시간 윈도우 — 새벽 킥오프(예: 한국 시각 새벽 유럽 경기) 포함
-  const later = new Date(now.getTime() + 36 * 3_600_000);
-  const url = `${BASE}/matches?dateFrom=${ymd(now)}&dateTo=${ymd(later)}`;
-
-  const res = await fetch(url, {
-    headers: headers(),
-    next: { revalidate: 300 }, // 5분 캐시
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`football-data /matches ${res.status}: ${body}`);
-  }
-
-  const data = (await res.json()) as { matches: FDMatch[] };
-  return data.matches.map(mapMatch);
-}
-
 export async function fetchUpcomingMatches(
   days: number = 7,
 ): Promise<MatchDTO[]> {
@@ -163,21 +143,3 @@ export async function fetchRecentFinishedMatches(
   });
 }
 
-export async function fetchMatchById(
-  externalId: string,
-): Promise<MatchDTO | null> {
-  const res = await fetch(`${BASE}/matches/${externalId}`, {
-    headers: headers(),
-    next: { revalidate: 120 },
-  });
-
-  if (res.status === 404) return null;
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`football-data /matches/${externalId} ${res.status}: ${body}`);
-  }
-
-  const data = (await res.json()) as FDMatch;
-  return mapMatch(data);
-}

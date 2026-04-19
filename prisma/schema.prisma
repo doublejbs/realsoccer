@@ -1,0 +1,48 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id                   String           @id @db.Uuid
+  email                String           @unique
+  displayName          String?          @map("display_name")
+  avatarUrl            String?          @map("avatar_url")
+  authProvider         String           @default("google") @map("auth_provider")
+  authProviderUserId   String?          @map("auth_provider_user_id")
+  createdAt            DateTime         @default(now()) @map("created_at")
+
+  preferences          UserPreference?
+
+  @@map("users")
+}
+
+model UserPreference {
+  userId           String   @id @map("user_id") @db.Uuid
+  favoriteLeagues  String[] @default([]) @map("favorite_leagues")
+  favoriteTeams    String[] @default([]) @map("favorite_teams")
+  favoriteStyles   String[] @default([]) @map("favorite_styles")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+// 매치 데이터는 football-data.org 에서 가져오므로 DB에 저장하지 않는다.
+// match_id는 외부 매치 ID 문자열 (football-data.org 숫자 ID 또는 mock ID).
+model MatchContent {
+  id        String   @id @default(cuid())
+  matchId   String   @map("match_id")
+  kind      String   // 'reason' | 'watch_points' | 'summary'
+  content   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([matchId, kind])
+  @@map("match_contents")
+}

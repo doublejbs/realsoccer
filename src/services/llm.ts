@@ -59,8 +59,8 @@ const SYSTEM_PROMPT = `당신은 한국어로 글을 쓰는 해외축구 전문 
   · 순위표에서 두 팀 승점 차 2점 → "순위 싸움의 분수령"
   · 최근 맞대결 홈팀 연승 → "반복되는 징크스에 맞설 원정팀"
 - 숫자 인용 시 위 데이터에서 직접 가져온 값만 사용 (승수·승점·순위·스코어).
-- 데이터에 없는 사실(부상자, 예상 라인업, 감독의 최근 인터뷰, 최신 전술 변화)은 web_search 도구로 최신 정보를 확인할 수 있음. 확인 안 된 사실은 쓰지 말 것.
-- 학습 데이터(선수·팀·감독에 대한 일반 지식)는 참고 가능하나 최근 이적·감독 교체 등 시점에 민감한 사실은 web_search로 검증 권장.
+- 제공된 데이터(기본 경기 정보·폼·순위·H2H)에 없는 사실은 추측하지 말 것. 부상자·예상 라인업·감독 발언 등 모르는 사실은 언급하지 않는다.
+- 학습 데이터(선수·팀·감독에 대한 일반 지식)는 역사적 맥락 수준으로만 참고. 최근 이적·감독 교체 등 시점에 민감한 사실은 확실하지 않으면 쓰지 말 것.
 
 [공통]
 - 각 문장은 완성된 문장으로. 키워드 나열 금지.
@@ -140,8 +140,6 @@ async function callWithSchema<T extends z.ZodTypeAny>(
     ...(context ? ["", context] : []),
   ].join("\n");
 
-  const enableWebSearch = process.env.ENABLE_WEB_SEARCH !== "false";
-
   const response = await client.messages.parse({
     model: MODEL,
     max_tokens: 4096,
@@ -154,17 +152,6 @@ async function callWithSchema<T extends z.ZodTypeAny>(
     ],
     messages: [{ role: "user", content: userContent }],
     output_config: { format: zodOutputFormat(schema) },
-    ...(enableWebSearch
-      ? {
-          tools: [
-            {
-              type: "web_search_20260209",
-              name: "web_search",
-              max_uses: 3,
-            },
-          ],
-        }
-      : {}),
   });
 
   if (!response.parsed_output) {

@@ -11,14 +11,39 @@ import {
   type EnsureResult,
 } from "@/services/content";
 import { upsertMatches } from "@/services/matches-db";
+import type { MatchDTO } from "@/types";
 
 // Hobby 플랜 함수 타임아웃 상한 (60초)
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const TOP_N = 10;
+const TOP_FINISHED_FOR_SUMMARY = 10;
 const UPCOMING_DAYS = 7;
 const FINISHED_LOOKBACK_DAYS = 2;
+// Anthropic rate limit 내 병렬 한계. web_search 제거 후 상향.
+const AI_CONCURRENCY = 10;
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (true) {
+        const i = cursor++;
+        if (i >= items.length) return;
+        results[i] = await fn(items[i]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
 
 function tally(results: EnsureResult[]) {
   return results.reduce(
@@ -61,44 +86,63 @@ export async function GET(req: Request) {
     durationMs: 0,
   };
 
-  // --- Part A: 7일 윈도우 전 경기를 DB에 sync + 상위 N개만 AI 사전 생성 ---
-  try {
-    const upcoming = await fetchUpcomingMatches(UPCOMING_DAYS);
-    report.upserted.upcoming = await upsertMatches(upcoming);
+  // 외부 fetch 병렬
+  const [upcomingResult, finishedResult] = await Promise.allSettled([
+    fetchUpcomingMatches(UPCOMING_DAYS),
+    fetchRecentFinishedMatches(FINISHED_LOOKBACK_DAYS),
+  ]);
+  const upcoming =
+    upcomingResult.status === "fulfilled" ? upcomingResult.value : [];
+  const finished =
+    finishedResult.status === "fulfilled" ? finishedResult.value : [];
+  if (upcomingResult.status === "rejected")
+    console.error("[cron] upcoming fetch failed", upcomingResult.reason);
+  if (finishedResult.status === "rejected")
+    console.error("[cron] finished fetch failed", finishedResult.reason);
 
-    const topMatches = rankMatches(upcoming)
-      .slice(0, TOP_N)
-      .map((r) => r.match);
-    report.recommendations.picked = topMatches.length;
+  // AI 대상 선정
+  const topRecommend = rankMatches(upcoming)
+    .slice(0, TOP_N)
+    .map((r) => r.match);
+  const topFinished = finished
+    .filter((m) => m.status === "FINISHED")
+    .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0))
+    .slice(0, TOP_FINISHED_FOR_SUMMARY);
+  report.recommendations.picked = topRecommend.length;
+  report.summaries.picked = topFinished.length;
 
-    const reasonResults = await Promise.all(
-      topMatches.map((m) => ensureReasons(m)),
-    );
-    const watchResults = await Promise.all(
-      topMatches.map((m) => ensureWatchPoints(m)),
-    );
+  // AI 태스크 (reason + watch + summary 30개)와 upsert를 **동시에** 실행.
+  type AiTask =
+    | { kind: "reason"; m: MatchDTO }
+    | { kind: "watch"; m: MatchDTO }
+    | { kind: "summary"; m: MatchDTO };
+  const aiTasks: AiTask[] = [
+    ...topRecommend.map((m) => ({ kind: "reason" as const, m })),
+    ...topRecommend.map((m) => ({ kind: "watch" as const, m })),
+    ...topFinished.map((m) => ({ kind: "summary" as const, m })),
+  ];
 
-    report.recommendations.reason = tally(reasonResults);
-    report.recommendations.watchPoints = tally(watchResults);
-  } catch (err) {
-    console.error("[cron] recommendations phase failed", err);
-  }
+  const [aiResults, upcomingUpserts, finishedUpserts] = await Promise.all([
+    mapPool(aiTasks, AI_CONCURRENCY, (t) => {
+      if (t.kind === "reason") return ensureReasons(t.m);
+      if (t.kind === "watch") return ensureWatchPoints(t.m);
+      return ensureSummary(t.m);
+    }),
+    upsertMatches(upcoming),
+    upsertMatches(finished),
+  ]);
 
-  // --- Part B: 최근 종료 경기 sync + summary 생성 ---
-  try {
-    const finished = await fetchRecentFinishedMatches(FINISHED_LOOKBACK_DAYS);
-    report.upserted.finished = await upsertMatches(finished);
-
-    const onlyFinished = finished.filter((m) => m.status === "FINISHED");
-    report.summaries.picked = onlyFinished.length;
-
-    const summaryResults = await Promise.all(
-      onlyFinished.map((m) => ensureSummary(m)),
-    );
-    report.summaries.summary = tally(summaryResults);
-  } catch (err) {
-    console.error("[cron] summaries phase failed", err);
-  }
+  report.upserted.upcoming = upcomingUpserts;
+  report.upserted.finished = finishedUpserts;
+  report.recommendations.reason = tally(
+    aiResults.filter((_, i) => aiTasks[i].kind === "reason"),
+  );
+  report.recommendations.watchPoints = tally(
+    aiResults.filter((_, i) => aiTasks[i].kind === "watch"),
+  );
+  report.summaries.summary = tally(
+    aiResults.filter((_, i) => aiTasks[i].kind === "summary"),
+  );
 
   report.durationMs = Date.now() - startedAt;
   return NextResponse.json({ ok: true, ...report });

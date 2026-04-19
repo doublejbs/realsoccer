@@ -95,7 +95,6 @@ score = 중요도(0.35) + 인기도(0.20) + 최근 폼(0.15) + 스타일 충돌(
 | `FOOTBALL_DATA_API_KEY` | 32자 hex | ✅ (USE_MOCK=false 시) |
 | `ANTHROPIC_API_KEY` | Claude | ✅ (AI 생성 시) |
 | `ANTHROPIC_MODEL` | 기본 `claude-sonnet-4-6`, 고품질 `claude-opus-4-7` | ✅ |
-| `ENABLE_WEB_SEARCH` | `true`면 AI가 부상/라인업 웹 검색 (경기당 최대 3회) | — |
 | `USE_MOCK` | `true`면 외부 API 스킵, mock 데이터 사용 | ✅ |
 | `NEXT_PUBLIC_SITE_URL` | OG 이미지 절대경로 (카카오 공유에 필수) | 프로덕션 필수 |
 | `CRON_SECRET` | `/api/cron/refresh` 인증. Vercel Cron이 Bearer 헤더로 전달 | ✅ |
@@ -126,7 +125,7 @@ npm run db:studio        # Prisma Studio (테이블 뷰어)
 - **모델**: env `ANTHROPIC_MODEL` (기본 Sonnet 4.6).
 - **구조화 출력**: `client.messages.parse()` + `zodOutputFormat(schema)`. 파싱 실패 시 throw.
 - **시스템 프롬프트**: 한글 문체 가이드 + 데이터 활용 지침 + 금기(승부 단정·클리셰·이모지). `cache_control` 붙어있음 — 수정 시 프롬프트 캐시 무효화됨.
-- **web_search 도구**: `ENABLE_WEB_SEARCH=true`면 Claude가 부상/라인업/최근 전술을 웹에서 직접 검색.
+- **도구 사용 없음**: 데이터는 football-data.org API만 사용. Claude는 제공된 데이터로 내러티브만 작성 — 웹 검색·부상 정보 추정 등 불가.
 - **Thinking 끔**: 단순 작성 작업이라 adaptive thinking은 토큰만 낭비 → 비활성.
 
 ## UI 컨벤션

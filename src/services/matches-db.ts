@@ -26,29 +26,39 @@ function toDTO(row: {
   };
 }
 
+// pooler 연결 한계(connection_limit=1)와 rate limit 고려해 chunk 병렬.
+const UPSERT_CHUNK = 10;
+
 export async function upsertMatches(matches: MatchDTO[]): Promise<number> {
   let count = 0;
-  for (const m of matches) {
-    const data = {
-      leagueCode: m.leagueCode,
-      kickoffAt: new Date(m.kickoffAt),
-      status: m.status,
-      homeScore: m.homeScore,
-      awayScore: m.awayScore,
-      homeTeam: m.homeTeam as unknown as object,
-      awayTeam: m.awayTeam as unknown as object,
-      importance: m.importance ?? 50,
-    };
-    try {
-      await prisma.match.upsert({
-        where: { id: m.id },
-        create: { id: m.id, ...data },
-        update: data,
-      });
-      count++;
-    } catch (err) {
-      console.error("[matches-db] upsert failed", m.id, err);
-    }
+  for (let i = 0; i < matches.length; i += UPSERT_CHUNK) {
+    const chunk = matches.slice(i, i + UPSERT_CHUNK);
+    const results = await Promise.all(
+      chunk.map(async (m) => {
+        const data = {
+          leagueCode: m.leagueCode,
+          kickoffAt: new Date(m.kickoffAt),
+          status: m.status,
+          homeScore: m.homeScore,
+          awayScore: m.awayScore,
+          homeTeam: m.homeTeam as unknown as object,
+          awayTeam: m.awayTeam as unknown as object,
+          importance: m.importance ?? 50,
+        };
+        try {
+          await prisma.match.upsert({
+            where: { id: m.id },
+            create: { id: m.id, ...data },
+            update: data,
+          });
+          return true;
+        } catch (err) {
+          console.error("[matches-db] upsert failed", m.id, err);
+          return false;
+        }
+      }),
+    );
+    count += results.filter(Boolean).length;
   }
   return count;
 }

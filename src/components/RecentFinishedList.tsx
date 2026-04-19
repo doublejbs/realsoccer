@@ -30,12 +30,12 @@ function FinishedRow({ match, index }: { match: MatchDTO; index: number }) {
     <li className="border-b border-hairline">
       <Link
         href={`/matches/${match.id}`}
-        className="group flex items-center gap-4 py-4 transition-colors hover:bg-surface"
+        className="group flex items-center gap-3 py-4 transition-colors hover:bg-surface"
       >
-        <span className="w-6 font-mono text-xs text-ink-faint num">
+        <span className="shrink-0 w-6 font-mono text-xs text-ink-faint num">
           {String(index).padStart(2, "0")}
         </span>
-        <div className="flex items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1">
           <TeamCrest
             src={match.homeTeam.crestUrl}
             alt={match.homeTeam.name}
@@ -47,23 +47,23 @@ function FinishedRow({ match, index }: { match: MatchDTO; index: number }) {
             size={22}
           />
         </div>
-        <div className="flex-1">
-          <div className="flex items-baseline gap-2">
-            <span className="font-display text-lg font-semibold text-ink">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0">
+            <span className="font-display text-base font-semibold text-ink sm:text-lg">
               {match.homeTeam.shortName}
             </span>
-            <span className="mx-1 font-mono text-sm text-ink-dim num">
-              {match.homeScore} - {match.awayScore}
+            <span className="font-mono text-sm text-ink-dim num">
+              {match.homeScore}-{match.awayScore}
             </span>
-            <span className="font-display text-lg font-semibold text-ink">
+            <span className="font-display text-base font-semibold text-ink sm:text-lg">
               {match.awayTeam.shortName}
             </span>
           </div>
-          <div className="mt-0.5 font-mono text-[10px] uppercase tracking-[0.15em] text-ink-mute">
-            {match.leagueCode} · {k.date} · 5줄 요약 보기
+          <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
+            {match.leagueCode} · {k.date} · 5줄 요약
           </div>
         </div>
-        <span className="font-mono text-xs text-ink-faint transition-colors group-hover:text-accent">
+        <span className="shrink-0 font-mono text-xs text-ink-faint transition-colors group-hover:text-accent">
           →
         </span>
       </Link>

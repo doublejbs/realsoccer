@@ -116,6 +116,27 @@ export async function fetchTodaysMatches(): Promise<MatchDTO[]> {
   return data.matches.map(mapMatch);
 }
 
+export async function fetchUpcomingMatches(
+  days: number = 7,
+): Promise<MatchDTO[]> {
+  const now = new Date();
+  const later = new Date(now.getTime() + days * 24 * 3_600_000);
+  const url = `${BASE}/matches?dateFrom=${ymd(now)}&dateTo=${ymd(later)}`;
+
+  const res = await fetch(url, {
+    headers: headers(),
+    next: { revalidate: 1800 }, // 30분 — cron 주기(daily)에 맞춰 넉넉히
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`football-data /matches(upcoming) ${res.status}: ${body}`);
+  }
+
+  const data = (await res.json()) as { matches: FDMatch[] };
+  return data.matches.map(mapMatch);
+}
+
 export async function fetchRecentFinishedMatches(
   daysBack: number = 2,
 ): Promise<MatchDTO[]> {

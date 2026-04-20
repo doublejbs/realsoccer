@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Tag } from "@/components/ui/Tag";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { TeamCrest } from "@/components/TeamCrest";
 import { formatKickoff, hoursUntil } from "@/lib/time";
 import type { MatchDTO } from "@/types";
@@ -19,12 +20,14 @@ export function MatchHero({
   tags,
   reasonLead,
   href,
+  loading = false,
 }: {
   match: MatchDTO;
   headline?: string | null;
   tags?: string[] | null;
   reasonLead?: string;
   href?: string;
+  loading?: boolean;
 }) {
   const k = formatKickoff(match.kickoffAt);
   const h = hoursUntil(match.kickoffAt);
@@ -52,14 +55,18 @@ export function MatchHero({
           ) : (
             <Tag>{k.date.toUpperCase()}</Tag>
           )}
-          {tags?.map((tag) => (
-            <span
-              key={tag}
-              className="font-mono text-[9px] uppercase tracking-[0.15em] text-accent border border-accent/40 px-1.5 py-0.5"
-            >
-              {tag}
-            </span>
-          ))}
+          {loading ? (
+            <Skeleton className="h-4 w-20 rounded-none" />
+          ) : (
+            tags?.map((tag) => (
+              <span
+                key={tag}
+                className="font-mono text-[9px] uppercase tracking-[0.15em] text-accent border border-accent/40 px-1.5 py-0.5"
+              >
+                {tag}
+              </span>
+            ))
+          )}
         </div>
         <span className="shrink-0 font-mono text-xs text-ink-mute num">
           {k.time}
@@ -95,16 +102,25 @@ export function MatchHero({
         </div>
       )}
 
-      {headline && (
-        <p className="mt-7 font-display text-xl font-semibold leading-snug text-ink rise rise-3 sm:text-2xl">
-          {headline}
-        </p>
-      )}
-      {!headline && reasonLead && (
-        <p className="mt-7 text-pretty font-display text-lg leading-snug text-ink-dim rise rise-3 sm:text-xl">
-          <span className="mr-2 text-accent">/</span>
-          {reasonLead}
-        </p>
+      {loading ? (
+        <div className="mt-7 space-y-2">
+          <Skeleton className="h-6 w-full rounded-none" />
+          <Skeleton className="h-6 w-3/4 rounded-none" />
+        </div>
+      ) : (
+        <>
+          {headline && (
+            <p className="mt-7 font-display text-xl font-semibold leading-snug text-ink rise rise-3 sm:text-2xl">
+              {headline}
+            </p>
+          )}
+          {!headline && reasonLead && (
+            <p className="mt-7 text-pretty font-display text-lg leading-snug text-ink-dim rise rise-3 sm:text-xl">
+              <span className="mr-2 text-accent">/</span>
+              {reasonLead}
+            </p>
+          )}
+        </>
       )}
 
       {href && (

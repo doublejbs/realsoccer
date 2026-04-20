@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { TopBar } from "@/components/ui/TopBar";
 import { UserMenu } from "@/components/UserMenu";
@@ -26,14 +27,6 @@ export default async function HomePage() {
   const ranked = rankMatches(matches, user.preferences ?? null);
   const top = ranked[0];
   const rest = ranked.slice(1, 4);
-
-  const [reasons, headline, tags] = top
-    ? await Promise.all([
-        getReasons(top.match),
-        getHeadline(top.match),
-        getTags(top.match),
-      ])
-    : [null, null, null];
 
   const prefs = user.preferences;
   const prefsEmpty =
@@ -87,13 +80,13 @@ export default async function HomePage() {
 
         <div className="mt-8 rise rise-3">
           {top ? (
-            <MatchHero
-              match={top.match}
-              headline={headline}
-              tags={tags}
-              reasonLead={reasons?.[0]}
-              href={`/matches/${top.match.id}`}
-            />
+            <Suspense
+              fallback={
+                <MatchHero match={top.match} href={`/matches/${top.match.id}`} loading />
+              }
+            >
+              <TopMatchContent match={top.match} href={`/matches/${top.match.id}`} />
+            </Suspense>
           ) : (
             <EmptyState />
           )}
@@ -125,6 +118,23 @@ export default async function HomePage() {
         )}
       </main>
     </div>
+  );
+}
+
+async function TopMatchContent({ match, href }: { match: MatchDTO; href: string }) {
+  const [reasons, headline, tags] = await Promise.all([
+    getReasons(match),
+    getHeadline(match),
+    getTags(match),
+  ]);
+  return (
+    <MatchHero
+      match={match}
+      headline={headline}
+      tags={tags}
+      reasonLead={reasons?.[0]}
+      href={href}
+    />
   );
 }
 

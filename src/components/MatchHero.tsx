@@ -15,10 +15,14 @@ const LEAGUE_LABEL: Record<string, string> = {
 
 export function MatchHero({
   match,
+  headline,
+  tags,
   reasonLead,
   href,
 }: {
   match: MatchDTO;
+  headline?: string | null;
+  tags?: string[] | null;
   reasonLead?: string;
   href?: string;
 }) {
@@ -48,6 +52,14 @@ export function MatchHero({
           ) : (
             <Tag>{k.date.toUpperCase()}</Tag>
           )}
+          {tags?.map((tag) => (
+            <span
+              key={tag}
+              className="font-mono text-[9px] uppercase tracking-[0.15em] text-accent border border-accent/40 px-1.5 py-0.5"
+            >
+              {tag}
+            </span>
+          ))}
         </div>
         <span className="shrink-0 font-mono text-xs text-ink-mute num">
           {k.time}
@@ -83,7 +95,12 @@ export function MatchHero({
         </div>
       )}
 
-      {reasonLead && (
+      {headline && (
+        <p className="mt-7 font-display text-xl font-semibold leading-snug text-ink rise rise-3 sm:text-2xl">
+          {headline}
+        </p>
+      )}
+      {!headline && reasonLead && (
         <p className="mt-7 text-pretty font-display text-lg leading-snug text-ink-dim rise rise-3 sm:text-xl">
           <span className="mr-2 text-accent">/</span>
           {reasonLead}

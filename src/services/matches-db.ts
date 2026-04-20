@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { MatchDTO, MatchStatus, TeamDTO } from "@/types";
 
+
 function toDTO(row: {
   id: string;
   leagueCode: string;
@@ -94,4 +95,34 @@ export async function findRecentFinishedMatches(
     orderBy: { kickoffAt: "desc" },
   });
   return rows.map(toDTO);
+}
+
+// 전체 FINISHED 경기를 최신순으로 페이지네이션 조회.
+export async function findFinishedPage(
+  page: number,
+  perPage: number = 20,
+): Promise<{
+  matches: MatchDTO[];
+  total: number;
+  pageCount: number;
+  hasMore: boolean;
+}> {
+  const safePage = Math.max(1, Math.floor(page));
+  const skip = (safePage - 1) * perPage;
+  const [rows, total] = await Promise.all([
+    prisma.match.findMany({
+      where: { status: "FINISHED" },
+      orderBy: { kickoffAt: "desc" },
+      skip,
+      take: perPage,
+    }),
+    prisma.match.count({ where: { status: "FINISHED" } }),
+  ]);
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  return {
+    matches: rows.map(toDTO),
+    total,
+    pageCount,
+    hasMore: safePage < pageCount,
+  };
 }

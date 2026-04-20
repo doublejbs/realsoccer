@@ -11,7 +11,7 @@ import {
   getTodaysMatches,
 } from "@/services/matches";
 import { rankMatches } from "@/services/recommendation";
-import { getReasons } from "@/services/content";
+import { getHeadline, getReasons, getTags } from "@/services/content";
 import { formatKickoff } from "@/lib/time";
 import type { MatchDTO } from "@/types";
 
@@ -27,7 +27,13 @@ export default async function HomePage() {
   const top = ranked[0];
   const rest = ranked.slice(1, 4);
 
-  const reasons = top ? await getReasons(top.match) : [];
+  const [reasons, headline, tags] = top
+    ? await Promise.all([
+        getReasons(top.match),
+        getHeadline(top.match),
+        getTags(top.match),
+      ])
+    : [null, null, null];
 
   const prefs = user.preferences;
   const prefsEmpty =
@@ -53,23 +59,24 @@ export default async function HomePage() {
       />
 
       <main className="mx-auto max-w-screen-sm px-5 pb-24 pt-8">
-        <section className="flex items-baseline justify-between rise rise-1">
-          <div>
+        <section className="rise rise-1">
+          <div className="flex items-start justify-between">
             <div className="font-mono text-[10px] uppercase tracking-[0.25em] text-ink-mute">
-              TODAY · ISSUE {String(issueNo).padStart(3, "0")}
+              ISSUE {String(issueNo).padStart(3, "0")} · {dateLabel}
             </div>
-            <h1 className="mt-2 font-display text-4xl font-semibold tracking-tightest text-ink sm:text-5xl">
-              오늘의 경기
-            </h1>
           </div>
-          <div className="text-right font-mono text-xs text-ink-mute num">
-            {dateLabel}
-          </div>
+          <h1 className="mt-3 font-display tracking-tightest text-ink">
+            <span className="block text-[11px] font-normal uppercase tracking-[0.3em] text-accent font-mono">
+              realsoccer
+            </span>
+            <span className="block text-5xl font-semibold italic leading-none sm:text-6xl">
+              Pick
+            </span>
+          </h1>
         </section>
 
-        <p className="mt-4 max-w-md text-pretty text-ink-dim rise rise-2">
-          수많은 경기 중 <em className="not-italic text-ink">딱 하나</em>만
-          고른다면.
+        <p className="mt-5 max-w-md text-pretty text-ink-dim rise rise-2">
+          다가오는 경기 중 <em className="not-italic text-ink">딱 하나</em>만 고른다면.
         </p>
 
         {prefsEmpty && (
@@ -82,7 +89,9 @@ export default async function HomePage() {
           {top ? (
             <MatchHero
               match={top.match}
-              reasonLead={reasons[0]}
+              headline={headline}
+              tags={tags}
+              reasonLead={reasons?.[0]}
               href={`/matches/${top.match.id}`}
             />
           ) : (

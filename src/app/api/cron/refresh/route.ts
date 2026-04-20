@@ -5,24 +5,22 @@ import {
 } from "@/services/football-data";
 import { rankMatches } from "@/services/recommendation";
 import {
-  ensureReasons,
+  ensureContextData,
+  ensureMatchMeta,
   ensureSummary,
-  ensureWatchPoints,
   type EnsureResult,
 } from "@/services/content";
 import { upsertMatches } from "@/services/matches-db";
 import type { MatchDTO } from "@/types";
 
-// Hobby 플랜 함수 타임아웃 상한 (60초)
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const TOP_N = 10;
-const TOP_FINISHED_FOR_SUMMARY = 10;
 const UPCOMING_DAYS = 7;
 const FINISHED_LOOKBACK_DAYS = 2;
-// Anthropic rate limit 내 병렬 한계. web_search 제거 후 상향.
-const AI_CONCURRENCY = 10;
+const CLAUDE_CONCURRENCY = 5;   // Claude 동시 호출 상한 (ITPM 초과 방지)
+const DATA_CONCURRENCY = 10;    // football-data fetch (Claude 아님, 제약 없음)
 
 async function mapPool<T, R>(
   items: T[],
@@ -56,94 +54,61 @@ function tally(results: EnsureResult[]) {
 }
 
 export async function GET(req: Request) {
-  // Vercel Cron은 Authorization: Bearer $CRON_SECRET 헤더를 자동으로 붙여줌.
   const secret = process.env.CRON_SECRET;
   if (!secret) {
-    return NextResponse.json(
-      { error: "CRON_SECRET not configured" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "CRON_SECRET not configured" }, { status: 500 });
   }
-  const auth = req.headers.get("authorization");
-  if (auth !== `Bearer ${secret}`) {
+  if (req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const startedAt = Date.now();
-  const report: {
-    upserted: { upcoming: number; finished: number };
-    recommendations: {
-      picked: number;
-      reason: Record<string, number>;
-      watchPoints: Record<string, number>;
-    };
-    summaries: { picked: number; summary: Record<string, number> };
-    durationMs: number;
-  } = {
+  const report = {
     upserted: { upcoming: 0, finished: 0 },
-    recommendations: { picked: 0, reason: {}, watchPoints: {} },
-    summaries: { picked: 0, summary: {} },
+    recommendations: { picked: 0, meta: {} as Record<string, number>, context: {} as Record<string, number> },
+    summaries: { picked: 0, summary: {} as Record<string, number> },
     durationMs: 0,
   };
 
-  // 외부 fetch 병렬
   const [upcomingResult, finishedResult] = await Promise.allSettled([
     fetchUpcomingMatches(UPCOMING_DAYS),
     fetchRecentFinishedMatches(FINISHED_LOOKBACK_DAYS),
   ]);
-  const upcoming =
-    upcomingResult.status === "fulfilled" ? upcomingResult.value : [];
-  const finished =
-    finishedResult.status === "fulfilled" ? finishedResult.value : [];
-  if (upcomingResult.status === "rejected")
-    console.error("[cron] upcoming fetch failed", upcomingResult.reason);
-  if (finishedResult.status === "rejected")
-    console.error("[cron] finished fetch failed", finishedResult.reason);
+  const upcoming = upcomingResult.status === "fulfilled" ? upcomingResult.value : [];
+  const finished = finishedResult.status === "fulfilled" ? finishedResult.value : [];
 
-  // AI 대상 선정
-  const topRecommend = rankMatches(upcoming)
-    .slice(0, TOP_N)
-    .map((r) => r.match);
+  const topRecommend = rankMatches(upcoming).slice(0, TOP_N).map((r) => r.match);
   const topFinished = finished
     .filter((m) => m.status === "FINISHED")
     .sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0))
-    .slice(0, TOP_FINISHED_FOR_SUMMARY);
+    .slice(0, TOP_N);
   report.recommendations.picked = topRecommend.length;
   report.summaries.picked = topFinished.length;
 
-  // AI 태스크 (reason + watch + summary 30개)와 upsert를 **동시에** 실행.
-  type AiTask =
-    | { kind: "reason"; m: MatchDTO }
-    | { kind: "watch"; m: MatchDTO }
-    | { kind: "summary"; m: MatchDTO };
-  const aiTasks: AiTask[] = [
-    ...topRecommend.map((m) => ({ kind: "reason" as const, m })),
-    ...topRecommend.map((m) => ({ kind: "watch" as const, m })),
-    ...topFinished.map((m) => ({ kind: "summary" as const, m })),
-  ];
+  // 카테고리별 pool 분리:
+  // meta + summary = Claude 호출 → 각 최대 5개 (ITPM 초과 방지)
+  // context = football-data → 별도 pool, Claude와 무관
+  const [metaResults, contextResults, summaryResults] = await Promise.all([
+    mapPool(topRecommend, CLAUDE_CONCURRENCY, (m) => ensureMatchMeta(m)),
+    mapPool(topRecommend, DATA_CONCURRENCY, (m) => ensureContextData(m)),
+    mapPool(topFinished, CLAUDE_CONCURRENCY, (m) => ensureSummary(m)),
+  ]);
 
-  const [aiResults, upcomingUpserts, finishedUpserts] = await Promise.all([
-    mapPool(aiTasks, AI_CONCURRENCY, (t) => {
-      if (t.kind === "reason") return ensureReasons(t.m);
-      if (t.kind === "watch") return ensureWatchPoints(t.m);
-      return ensureSummary(t.m);
-    }),
-    upsertMatches(upcoming),
-    upsertMatches(finished),
+  // 새로 생성된 경기만 DB upsert.
+  const recommendToSave = topRecommend.filter((_, i) => metaResults[i] === "generated");
+  const finishedToSave = topFinished.filter((_, i) => summaryResults[i] === "generated");
+
+  const [upcomingUpserts, finishedUpserts] = await Promise.all([
+    upsertMatches(recommendToSave),
+    upsertMatches(finishedToSave),
   ]);
 
   report.upserted.upcoming = upcomingUpserts;
   report.upserted.finished = finishedUpserts;
-  report.recommendations.reason = tally(
-    aiResults.filter((_, i) => aiTasks[i].kind === "reason"),
-  );
-  report.recommendations.watchPoints = tally(
-    aiResults.filter((_, i) => aiTasks[i].kind === "watch"),
-  );
-  report.summaries.summary = tally(
-    aiResults.filter((_, i) => aiTasks[i].kind === "summary"),
-  );
-
+  report.recommendations.meta = tally(metaResults);
+  report.recommendations.context = tally(contextResults);
+  report.summaries.summary = tally(summaryResults);
   report.durationMs = Date.now() - startedAt;
+
   return NextResponse.json({ ok: true, ...report });
 }

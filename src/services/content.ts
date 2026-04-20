@@ -1,98 +1,156 @@
 import { prisma } from "@/lib/prisma";
-import type { MatchDTO } from "@/types";
+import type { MatchContextData, MatchDTO } from "@/types";
 import {
-  fallbackReasons,
-  fallbackSummary,
-  fallbackWatchPoints,
-  generateReasons,
-  generateSummary,
-  generateWatchPoints,
-} from "./llm";
+  fetchStandings,
+  fetchTeamForm,
+} from "./football-data-context";
+import { generateMatchMeta, generateSummary } from "./llm";
 
-type Kind = "reason" | "watch_points" | "summary";
+type Kind = "reason" | "watch_points" | "headline" | "tags" | "summary" | "context_data";
 
-// --- 읽기 전용 (페이지·API에서 사용) ---
-// DB에 캐시된 컨텐츠가 있으면 반환, 없으면 폴백.
-// Claude를 호출하지 않음 — AI 생성은 cron 전용.
-async function getFromCache(
-  match: MatchDTO,
-  kind: Kind,
-  fallback: (m: MatchDTO) => string[],
-): Promise<string[]> {
+export type EnsureResult = "cached" | "generated" | "failed" | "skipped";
+
+// --- 읽기 전용 (페이지·API) ---
+async function getFromCache(match: MatchDTO, kind: Kind): Promise<unknown | null> {
   try {
     const existing = await prisma.matchContent.findUnique({
       where: { matchId_kind: { matchId: match.id, kind } },
     });
-    if (existing) return existing.content as unknown as string[];
+    return existing ? existing.content : null;
   } catch (err) {
     console.error(`[content] DB read failed for ${kind}`, err);
+    return null;
   }
-  return fallback(match);
 }
 
-export function getReasons(match: MatchDTO) {
-  return getFromCache(match, "reason", fallbackReasons);
+export async function getReasons(match: MatchDTO): Promise<string[] | null> {
+  const val = await getFromCache(match, "reason");
+  return val as string[] | null;
 }
 
-export function getWatchPoints(match: MatchDTO) {
-  return getFromCache(match, "watch_points", fallbackWatchPoints);
+export async function getWatchPoints(match: MatchDTO): Promise<string[] | null> {
+  const val = await getFromCache(match, "watch_points");
+  return val as string[] | null;
 }
 
-export function getSummary(match: MatchDTO) {
-  return getFromCache(match, "summary", fallbackSummary);
+export async function getHeadline(match: MatchDTO): Promise<string | null> {
+  const val = await getFromCache(match, "headline");
+  if (!val) return null;
+  return (val as string[])[0] ?? null;
 }
 
-// --- 쓰기 전용 (cron에서만 호출) ---
-// 캐시에 이미 있으면 skip. 없으면 Claude 호출 → 성공 시 DB upsert.
-export type EnsureResult = "cached" | "generated" | "failed" | "skipped";
+export async function getTags(match: MatchDTO): Promise<string[] | null> {
+  const val = await getFromCache(match, "tags");
+  return val as string[] | null;
+}
 
-async function ensureContent(
-  match: MatchDTO,
-  kind: Kind,
-  generator: (m: MatchDTO) => Promise<string[]>,
-): Promise<EnsureResult> {
+export async function getSummary(match: MatchDTO): Promise<string[] | null> {
+  const val = await getFromCache(match, "summary");
+  return val as string[] | null;
+}
+
+export async function getContextData(match: MatchDTO): Promise<MatchContextData | null> {
+  const val = await getFromCache(match, "context_data");
+  return val as MatchContextData | null;
+}
+
+// --- 쓰기 전용 (cron 전용) ---
+
+async function upsertKind(matchId: string, kind: Kind, content: object | string[] | string) {
+  await prisma.matchContent.upsert({
+    where: { matchId_kind: { matchId, kind } },
+    create: { matchId, kind, content },
+    update: { content },
+  });
+}
+
+// headline + tags + reasons + watchPoints 한 번에 (Claude 1회 호출).
+export async function ensureMatchMeta(match: MatchDTO): Promise<EnsureResult> {
+  try {
+    const [r, w, h, t] = await Promise.all([
+      prisma.matchContent.findUnique({ where: { matchId_kind: { matchId: match.id, kind: "reason" } } }),
+      prisma.matchContent.findUnique({ where: { matchId_kind: { matchId: match.id, kind: "watch_points" } } }),
+      prisma.matchContent.findUnique({ where: { matchId_kind: { matchId: match.id, kind: "headline" } } }),
+      prisma.matchContent.findUnique({ where: { matchId_kind: { matchId: match.id, kind: "tags" } } }),
+    ]);
+    if (r && w && h && t) return "cached";
+  } catch (err) {
+    console.error("[content] DB read failed (ensureMatchMeta)", err);
+  }
+
+  try {
+    const meta = await generateMatchMeta(match);
+    await Promise.all([
+      upsertKind(match.id, "reason", meta.reasons),
+      upsertKind(match.id, "watch_points", meta.watchPoints),
+      upsertKind(match.id, "headline", [meta.headline]),
+      upsertKind(match.id, "tags", meta.tags),
+    ]);
+    return "generated";
+  } catch (err) {
+    console.error("[content] ensureMatchMeta failed", match.id, err);
+    return "failed";
+  }
+}
+
+// 폼 + 순위 데이터 저장 (football-data, Claude 아님).
+export async function ensureContextData(match: MatchDTO): Promise<EnsureResult> {
   try {
     const existing = await prisma.matchContent.findUnique({
-      where: { matchId_kind: { matchId: match.id, kind } },
+      where: { matchId_kind: { matchId: match.id, kind: "context_data" } },
     });
     if (existing) return "cached";
   } catch (err) {
-    console.error(`[content] DB read failed (ensure ${kind})`, err);
+    console.error("[content] DB read failed (ensureContextData)", err);
   }
 
-  let aiContent: string[] | null = null;
   try {
-    aiContent = await generator(match);
-  } catch (err) {
-    console.error(`[content] AI generation failed (${kind})`, match.id, err);
-    return "failed";
-  }
+    const [homeForm, awayForm, standings] = await Promise.all([
+      fetchTeamForm(match.homeTeam.id).catch(() => []),
+      fetchTeamForm(match.awayTeam.id).catch(() => []),
+      fetchStandings(match.leagueCode).catch(() => null),
+    ]);
 
-  if (!aiContent) return "failed";
+    const homeRow = standings?.find((r) => String(r.team.id) === match.homeTeam.id);
+    const awayRow = standings?.find((r) => String(r.team.id) === match.awayTeam.id);
 
-  try {
-    await prisma.matchContent.upsert({
-      where: { matchId_kind: { matchId: match.id, kind } },
-      create: { matchId: match.id, kind, content: aiContent },
-      update: { content: aiContent },
-    });
+    const data: MatchContextData = {
+      homeForm: homeForm.map((f) => f.result),
+      awayForm: awayForm.map((f) => f.result),
+      homeStanding: homeRow
+        ? { position: homeRow.position, points: homeRow.points, played: homeRow.playedGames }
+        : undefined,
+      awayStanding: awayRow
+        ? { position: awayRow.position, points: awayRow.points, played: awayRow.playedGames }
+        : undefined,
+    };
+
+    await upsertKind(match.id, "context_data", data);
     return "generated";
   } catch (err) {
-    console.error(`[content] cache write failed (${kind})`, match.id, err);
+    console.error("[content] ensureContextData failed", match.id, err);
     return "failed";
   }
 }
 
-export function ensureReasons(match: MatchDTO) {
-  return ensureContent(match, "reason", generateReasons);
-}
-
-export function ensureWatchPoints(match: MatchDTO) {
-  return ensureContent(match, "watch_points", generateWatchPoints);
-}
-
-// 종료된 경기에만 summary 생성.
 export async function ensureSummary(match: MatchDTO): Promise<EnsureResult> {
   if (match.status !== "FINISHED") return "skipped";
-  return ensureContent(match, "summary", generateSummary);
+
+  try {
+    const existing = await prisma.matchContent.findUnique({
+      where: { matchId_kind: { matchId: match.id, kind: "summary" } },
+    });
+    if (existing) return "cached";
+  } catch (err) {
+    console.error("[content] DB read failed (ensureSummary)", err);
+  }
+
+  try {
+    const lines = await generateSummary(match);
+    await upsertKind(match.id, "summary", lines);
+    return "generated";
+  } catch (err) {
+    console.error("[content] ensureSummary failed", match.id, err);
+    return "failed";
+  }
 }

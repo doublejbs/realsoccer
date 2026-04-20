@@ -38,6 +38,13 @@ export interface MatchBundle {
   score?: number;
 }
 
+export interface MatchContextData {
+  homeForm: ("W" | "D" | "L")[];
+  awayForm: ("W" | "D" | "L")[];
+  homeStanding?: { position: number; points: number; played: number };
+  awayStanding?: { position: number; points: number; played: number };
+}
+
 export interface UserPreferencesDTO {
   favoriteLeagues: string[];
   favoriteTeams: string[];

@@ -6,7 +6,15 @@ import { UserMenu } from "@/components/UserMenu";
 import { MatchHero } from "@/components/MatchHero";
 import { requireUser } from "@/lib/auth";
 import { getMatchById } from "@/services/matches";
-import { getReasons, getSummary, getWatchPoints } from "@/services/content";
+import {
+  getContextData,
+  getHeadline,
+  getReasons,
+  getSummary,
+  getTags,
+  getWatchPoints,
+} from "@/services/content";
+import type { MatchContextData } from "@/types";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +33,7 @@ export async function generateMetadata({
   params: { id: string };
 }): Promise<Metadata> {
   const match = await getMatchById(params.id);
-  if (!match) {
-    return { title: "경기를 찾을 수 없습니다" };
-  }
+  if (!match) return { title: "경기를 찾을 수 없습니다" };
 
   const home = match.homeTeam.shortName ?? match.homeTeam.name;
   const away = match.awayTeam.shortName ?? match.awayTeam.name;
@@ -45,7 +51,6 @@ export async function generateMetadata({
     match.status === "FINISHED"
       ? `${league} · 최종 ${match.homeScore}-${match.awayScore} · 5줄 요약 보기`
       : `${league} · ${kickoff} 킥오프 · 왜 봐야 하는지, 무엇을 볼지.`;
-
   const ogPath = `/matches/${params.id}/opengraph-image`;
 
   return {
@@ -76,12 +81,18 @@ export default async function MatchDetailPage({
   const match = await getMatchById(params.id);
   if (!match) notFound();
 
-  const [reasons, watchPoints] = await Promise.all([
-    getReasons(match),
-    getWatchPoints(match),
-  ]);
-  const summary =
-    match.status === "FINISHED" ? await getSummary(match) : null;
+  const [reasons, watchPoints, headline, tags, contextData, summary] =
+    await Promise.all([
+      getReasons(match),
+      getWatchPoints(match),
+      getHeadline(match),
+      getTags(match),
+      getContextData(match),
+      match.status === "FINISHED" ? getSummary(match) : Promise.resolve(null),
+    ]);
+
+  const sectionIndex = { reasons: "01", watchPoints: "02", summary: "03" };
+  const hasSummary = !!summary;
 
   return (
     <div>
@@ -103,42 +114,57 @@ export default async function MatchDetailPage({
         </Link>
 
         <div className="mt-5 rise rise-1">
-          <MatchHero match={match} />
+          <MatchHero match={match} headline={headline} tags={tags} />
         </div>
 
-        <Section title="보는 이유" index="01" delay="rise-2">
-          <ol className="hairline-y">
-            {reasons.map((r, i) => (
-              <li key={i} className="flex items-start gap-4 py-4">
-                <span className="mt-1 font-mono text-[10px] text-accent">
-                  {String(i + 1).padStart(2, "0")}
-                </span>
-                <p className="flex-1 text-pretty font-display text-lg leading-snug text-ink sm:text-xl">
-                  {r}
-                </p>
-              </li>
-            ))}
-          </ol>
-        </Section>
+        {/* 폼 + 순위 컨텍스트 */}
+        {contextData && (
+          <Section title="팀 현황" index="00" delay="rise-2">
+            <TeamContextRow
+              home={match.homeTeam.shortName ?? match.homeTeam.name}
+              away={match.awayTeam.shortName ?? match.awayTeam.name}
+              ctx={contextData}
+            />
+          </Section>
+        )}
 
-        <Section title="관전 포인트" index="02" delay="rise-3">
-          <ul className="grid gap-3 sm:grid-cols-1">
-            {watchPoints.map((w, i) => (
-              <li
-                key={i}
-                className="relative border border-hairline bg-surface p-4 pl-14"
-              >
-                <span className="absolute left-3 top-3 font-display text-3xl font-semibold italic leading-none text-accent">
-                  {i + 1}
-                </span>
-                <p className="text-sm leading-relaxed text-ink-dim">{w}</p>
-              </li>
-            ))}
-          </ul>
-        </Section>
+        {reasons && (
+          <Section title="보는 이유" index={sectionIndex.reasons} delay="rise-2">
+            <ol className="hairline-y">
+              {reasons.map((r, i) => (
+                <li key={i} className="flex items-start gap-4 py-4">
+                  <span className="mt-1 font-mono text-[10px] text-accent">
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <p className="flex-1 text-pretty font-display text-lg leading-snug text-ink sm:text-xl">
+                    {r}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          </Section>
+        )}
 
-        {summary && (
-          <Section title="5줄 요약" index="03" delay="rise-4">
+        {watchPoints && (
+          <Section title="관전 포인트" index={sectionIndex.watchPoints} delay="rise-3">
+            <ul className="grid gap-3">
+              {watchPoints.map((w, i) => (
+                <li
+                  key={i}
+                  className="relative border border-hairline bg-surface p-4 pl-14"
+                >
+                  <span className="absolute left-3 top-3 font-display text-3xl font-semibold italic leading-none text-accent">
+                    {i + 1}
+                  </span>
+                  <p className="text-sm leading-relaxed text-ink-dim">{w}</p>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        )}
+
+        {hasSummary && summary && (
+          <Section title="5줄 요약" index={sectionIndex.summary} delay="rise-4">
             <ol className="hairline-y border-l-2 border-accent pl-4">
               {summary.map((s, i) => (
                 <li
@@ -148,9 +174,7 @@ export default async function MatchDetailPage({
                   <span className="mt-1 font-mono text-[10px] text-ink-mute num">
                     {String(i + 1).padStart(2, "0")}
                   </span>
-                  <p className="flex-1 text-sm leading-relaxed text-ink">
-                    {s}
-                  </p>
+                  <p className="flex-1 text-sm leading-relaxed text-ink">{s}</p>
                 </li>
               ))}
             </ol>
@@ -162,6 +186,62 @@ export default async function MatchDetailPage({
           <span>{match.status}</span>
         </div>
       </main>
+    </div>
+  );
+}
+
+function TeamContextRow({
+  home,
+  away,
+  ctx,
+}: {
+  home: string;
+  away: string;
+  ctx: MatchContextData;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <TeamCtx name={home} form={ctx.homeForm} standing={ctx.homeStanding} side="home" />
+      <TeamCtx name={away} form={ctx.awayForm} standing={ctx.awayStanding} side="away" />
+    </div>
+  );
+}
+
+function TeamCtx({
+  name,
+  form,
+  standing,
+  side,
+}: {
+  name: string;
+  form: ("W" | "D" | "L")[];
+  standing?: { position: number; points: number; played: number };
+  side: "home" | "away";
+}) {
+  const align = side === "away" ? "items-end text-right" : "items-start";
+  return (
+    <div className={`flex flex-col gap-2 ${align}`}>
+      <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-mute">
+        {name}
+      </span>
+      {form.length > 0 && (
+        <div className="flex gap-1">
+          {form.slice(0, 5).map((r, i) => (
+            <span
+              key={i}
+              className={`size-5 flex items-center justify-center font-mono text-[9px] font-bold
+                ${r === "W" ? "bg-accent text-bg" : r === "D" ? "bg-ink-mute/20 text-ink-mute" : "bg-border text-ink-faint"}`}
+            >
+              {r}
+            </span>
+          ))}
+        </div>
+      )}
+      {standing && (
+        <span className="font-mono text-[10px] text-ink-dim num">
+          {standing.position}위 · {standing.points}점
+        </span>
+      )}
     </div>
   );
 }
@@ -178,14 +258,10 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className={`mt-14 rise ${delay}`}>
-      <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="font-display text-2xl font-semibold tracking-tightest text-ink">
-          {title}
-        </h2>
-        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
-          § {index}
-        </span>
+    <section className={`mt-12 rise ${delay}`}>
+      <div className="mb-5 flex items-baseline gap-3 border-b border-hairline pb-3">
+        <span className="font-mono text-[10px] text-accent">§ {index}</span>
+        <h2 className="font-display text-xl font-semibold text-ink">{title}</h2>
       </div>
       {children}
     </section>

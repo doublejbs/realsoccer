@@ -20,6 +20,14 @@ export function RecentFinishedList({ matches }: { matches: MatchDTO[] }) {
           <FinishedRow key={m.id} match={m} index={i + 1} />
         ))}
       </ul>
+
+      <Link
+        href="/finished"
+        className="group mt-4 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.2em] text-ink-mute transition-colors hover:text-accent"
+      >
+        <span>전체 보기</span>
+        <span className="transition-transform group-hover:translate-x-0.5">→</span>
+      </Link>
     </div>
   );
 }

@@ -10,10 +10,15 @@ export async function getCurrentUser() {
 
   if (!user) return null;
 
-  // Upsert local user record on first access so downstream queries have a FK target.
-  const dbUser = await prisma.user.upsert({
+  const existing = await prisma.user.findUnique({
     where: { id: user.id },
-    create: {
+    include: { preferences: true },
+  });
+  if (existing) return existing;
+
+  // 첫 로그인 시에만 생성.
+  const dbUser = await prisma.user.create({
+    data: {
       id: user.id,
       email: user.email ?? "",
       displayName:
@@ -27,9 +32,6 @@ export async function getCurrentUser() {
         (user.user_metadata?.provider_id as string | undefined) ??
         (user.user_metadata?.sub as string | undefined) ??
         null,
-    },
-    update: {
-      email: user.email ?? undefined,
     },
     include: { preferences: true },
   });

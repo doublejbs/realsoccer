@@ -76,6 +76,13 @@ body::before {
 .rise-4 { animation-delay: 0.35s; }
 .rise-5 { animation-delay: 0.45s; }
 
+/* 스트리밍으로 교체되는 영역은 rise 애니메이션 없이 즉시 표시 */
+.no-rise .rise {
+  animation: none;
+  opacity: 1;
+  transform: none;
+}
+
 /* Marquee for live badge */
 @keyframes pulse-ring {
   0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.6); }

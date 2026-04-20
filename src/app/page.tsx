@@ -3,6 +3,7 @@ import Link from "next/link";
 import { TopBar } from "@/components/ui/TopBar";
 import { UserMenu } from "@/components/UserMenu";
 import { MatchHero } from "@/components/MatchHero";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { TeamCrest } from "@/components/TeamCrest";
 import { OnboardingBanner } from "@/components/OnboardingBanner";
 import { RecentFinishedList } from "@/components/RecentFinishedList";
@@ -14,19 +15,12 @@ import {
 import { rankMatches } from "@/services/recommendation";
 import { getHeadline, getReasons, getTags } from "@/services/content";
 import { formatKickoff } from "@/lib/time";
-import type { MatchDTO } from "@/types";
+import type { MatchDTO, UserPreferencesDTO } from "@/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const user = await requireUser();
-  const [matches, recentFinished] = await Promise.all([
-    getTodaysMatches(),
-    getRecentFinishedMatches(),
-  ]);
-  const ranked = rankMatches(matches, user.preferences ?? null);
-  const top = ranked[0];
-  const rest = ranked.slice(1, 4);
 
   const prefs = user.preferences;
   const prefsEmpty =
@@ -78,45 +72,73 @@ export default async function HomePage() {
           </div>
         )}
 
-        <div className="mt-8 rise rise-3">
-          {top ? (
-            <Suspense
-              fallback={
-                <MatchHero match={top.match} href={`/matches/${top.match.id}`} loading />
-              }
-            >
-              <TopMatchContent match={top.match} href={`/matches/${top.match.id}`} />
-            </Suspense>
-          ) : (
-            <EmptyState />
-          )}
-        </div>
+        <Suspense fallback={<TodayMatchesSkeleton />}>
+          <TodayMatchesSection prefs={prefs} />
+        </Suspense>
 
-        {rest.length > 0 && (
-          <section className="mt-16 rise rise-4">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="font-mono text-[10px] uppercase tracking-[0.25em] text-ink-mute">
-                그 외의 주목할 경기
-              </h2>
-              <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
-                {rest.length} matches
-              </span>
-            </div>
-
-            <ul className="border-t border-hairline">
-              {rest.map((r, i) => (
-                <SecondaryMatchRow key={r.match.id} index={i + 2} ranked={r} />
-              ))}
-            </ul>
-          </section>
-        )}
-
-        {recentFinished.length > 0 && (
-          <section className="mt-16 rise rise-5">
-            <RecentFinishedList matches={recentFinished} />
-          </section>
-        )}
+        <Suspense fallback={<RecentFinishedSkeleton />}>
+          <RecentFinishedSection />
+        </Suspense>
       </main>
+    </div>
+  );
+}
+
+// --- 비동기 섹션 컴포넌트 ---
+
+async function TodayMatchesSection({
+  prefs,
+}: {
+  prefs: UserPreferencesDTO | null;
+}) {
+  const matches = await getTodaysMatches();
+  const ranked = rankMatches(matches, prefs);
+  const top = ranked[0];
+  const rest = ranked.slice(1, 4);
+
+  return (
+    <div className="no-rise">
+      <div className="mt-8">
+        {top ? (
+          <Suspense
+            fallback={
+              <MatchHero match={top.match} href={`/matches/${top.match.id}`} loading />
+            }
+          >
+            <TopMatchContent match={top.match} href={`/matches/${top.match.id}`} />
+          </Suspense>
+        ) : (
+          <EmptyState />
+        )}
+      </div>
+
+      {rest.length > 0 && (
+        <section className="mt-16">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="font-mono text-[10px] uppercase tracking-[0.25em] text-ink-mute">
+              그 외의 주목할 경기
+            </h2>
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
+              {rest.length} matches
+            </span>
+          </div>
+          <ul className="border-t border-hairline">
+            {rest.map((r, i) => (
+              <SecondaryMatchRow key={r.match.id} index={i + 2} ranked={r} />
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
+
+async function RecentFinishedSection() {
+  const matches = await getRecentFinishedMatches();
+  if (matches.length === 0) return null;
+  return (
+    <div className="no-rise mt-16">
+      <RecentFinishedList matches={matches} />
     </div>
   );
 }
@@ -137,6 +159,110 @@ async function TopMatchContent({ match, href }: { match: MatchDTO; href: string 
     />
   );
 }
+
+// --- 스켈레톤 ---
+
+function TodayMatchesSkeleton() {
+  return (
+    <>
+      <div className="mt-8">
+        <article className="relative flex flex-col overflow-hidden border border-border bg-surface p-5 sm:p-8">
+          <span className="pointer-events-none absolute -left-px -top-px size-2 border-l border-t border-accent" />
+          <span className="pointer-events-none absolute -right-px -top-px size-2 border-r border-t border-accent" />
+          <span className="pointer-events-none absolute -bottom-px -left-px size-2 border-b border-l border-accent" />
+          <span className="pointer-events-none absolute -bottom-px -right-px size-2 border-b border-r border-accent" />
+
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-4 w-28 rounded-none" />
+            <Skeleton className="h-4 w-16 rounded-none" />
+          </div>
+
+          <div className="mt-6">
+            <Skeleton className="h-3 w-8 rounded-none" />
+            <div className="mt-2 flex items-center gap-4">
+              <Skeleton className="size-11 shrink-0 rounded-none" />
+              <Skeleton className="h-9 w-40 rounded-none" />
+            </div>
+          </div>
+
+          <div className="mt-5 flex items-center gap-3">
+            <span className="h-px flex-1 bg-hairline" />
+            <span className="font-display text-xl italic text-ink-faint">vs</span>
+            <span className="h-px flex-1 bg-hairline" />
+          </div>
+
+          <div className="mt-6">
+            <Skeleton className="h-3 w-8 rounded-none" />
+            <div className="mt-2 flex items-center gap-4">
+              <Skeleton className="size-11 shrink-0 rounded-none" />
+              <Skeleton className="h-9 w-40 rounded-none" />
+            </div>
+          </div>
+
+          <div className="mt-7 space-y-2">
+            <Skeleton className="h-6 w-full rounded-none" />
+            <Skeleton className="h-6 w-3/4 rounded-none" />
+          </div>
+
+          <div className="mt-7 flex items-center justify-between">
+            <Skeleton className="h-3 w-20 rounded-none" />
+            <Skeleton className="h-3 w-14 rounded-none" />
+          </div>
+        </article>
+      </div>
+
+      <div className="mt-16">
+        <div className="mb-4 flex items-center justify-between">
+          <Skeleton className="h-3 w-32 rounded-none" />
+          <Skeleton className="h-3 w-16 rounded-none" />
+        </div>
+        <ul className="border-t border-hairline">
+          {[0, 1, 2].map((i) => (
+            <li key={i} className="flex items-center gap-3 border-b border-hairline py-4">
+              <Skeleton className="h-3 w-5 shrink-0 rounded-none" />
+              <div className="flex shrink-0 items-center gap-1">
+                <Skeleton className="size-[22px] rounded-none" />
+                <Skeleton className="size-[22px] rounded-none" />
+              </div>
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Skeleton className="h-4 w-36 rounded-none" />
+                <Skeleton className="h-3 w-24 rounded-none" />
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </>
+  );
+}
+
+function RecentFinishedSkeleton() {
+  return (
+    <div className="mt-16">
+      <div className="mb-4 flex items-center justify-between">
+        <Skeleton className="h-3 w-36 rounded-none" />
+        <Skeleton className="h-3 w-16 rounded-none" />
+      </div>
+      <ul className="border-t border-hairline">
+        {[0, 1].map((i) => (
+          <li key={i} className="flex items-center gap-3 border-b border-hairline py-4">
+            <Skeleton className="h-3 w-5 shrink-0 rounded-none" />
+            <div className="flex shrink-0 items-center gap-1">
+              <Skeleton className="size-[22px] rounded-none" />
+              <Skeleton className="size-[22px] rounded-none" />
+            </div>
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <Skeleton className="h-4 w-36 rounded-none" />
+              <Skeleton className="h-3 w-24 rounded-none" />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// --- 공통 컴포넌트 ---
 
 function SecondaryMatchRow({
   index,

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getMatchById } from "@/services/matches";
-import { getReasons, getWatchPoints } from "@/services/content";
+import { getMatchContent } from "@/services/content";
 
 export async function GET(
   _req: Request,
@@ -13,10 +13,16 @@ export async function GET(
   const match = await getMatchById(params.id);
   if (!match) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  const [reasons, watchPoints] = await Promise.all([
-    getReasons(match),
-    getWatchPoints(match),
-  ]);
+  const { reasons, watchPoints, headline, tags, contextData, summary } =
+    await getMatchContent(match);
 
-  return NextResponse.json({ match, reasons, watchPoints });
+  return NextResponse.json({
+    match,
+    reasons,
+    watchPoints,
+    headline,
+    tags,
+    contextData,
+    summary,
+  });
 }

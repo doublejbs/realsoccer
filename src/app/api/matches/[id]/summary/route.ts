@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getMatchById } from "@/services/matches";
-import { getSummary } from "@/services/content";
+import { getMatchContent } from "@/services/content";
 
 export async function GET(
   _req: Request,
@@ -13,6 +13,6 @@ export async function GET(
   const match = await getMatchById(params.id);
   if (!match) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  const summary = await getSummary(match);
+  const { summary } = await getMatchContent(match);
   return NextResponse.json({ summary });
 }

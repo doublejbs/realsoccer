@@ -18,6 +18,7 @@
 5. **캐시는 AI 성공 시에만.** `content.ts`는 AI가 실패하면 폴백 결과를 DB에 저장하지 않는다 (`match_contents` 오염 방지).
 6. **로그인 필수, 로컬 저장 없음.** 모든 사용자 데이터는 `user_id` 기준으로 DB에 저장.
 7. **외부 API 호출은 cron 전용.** 유저 요청은 DB(`matches`, `match_contents`)만 읽는다. football-data.org와 Anthropic API는 `/api/cron/refresh`(daily)에서만 호출. live match 스코어는 최대 24h 지연 — 수용된 트레이드오프.
+   - **예외**: 최신 뉴스([`services/news.ts`](src/services/news.ts) Google News RSS)는 신선도가 가치라 유저 요청 시점에 호출. Next fetch `revalidate: 600`(10분)으로 부하 완화. 페이지 렌더 블로킹하지 않도록 Suspense로 감싸 스트리밍.
 
 ## 기술 스택 (확정)
 

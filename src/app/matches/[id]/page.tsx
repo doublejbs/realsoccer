@@ -1,9 +1,14 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { TopBar } from "@/components/ui/TopBar";
 import { UserMenu } from "@/components/UserMenu";
 import { MatchHero } from "@/components/MatchHero";
+import {
+  MatchNewsSection,
+  MatchNewsSkeleton,
+} from "@/components/MatchNewsSection";
 import { requireUser } from "@/lib/auth";
 import { getMatchById } from "@/services/matches";
 import { getMatchContent } from "@/services/content";
@@ -167,6 +172,10 @@ export default async function MatchDetailPage({
             </ol>
           </Section>
         )}
+
+        <Suspense fallback={<MatchNewsSkeleton />}>
+          <MatchNewsSection match={match} />
+        </Suspense>
 
         <div className="mt-16 flex items-center justify-between border-t border-hairline pt-6 font-mono text-[10px] uppercase tracking-[0.2em] text-ink-faint">
           <span>match.id · {match.id}</span>

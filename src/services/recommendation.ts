@@ -1,11 +1,12 @@
 import type { MatchDTO, UserPreferencesDTO } from "@/types";
 
 const WEIGHTS = {
-  importance: 0.35,
-  popularity: 0.2,
-  form: 0.15,
+  importance: 0.3,
+  popularity: 0.15,
+  form: 0.1,
   styleClash: 0.1,
-  userPref: 0.2,
+  userPref: 0.15,
+  timeProximity: 0.2,
 };
 
 function formScore(form?: ("W" | "D" | "L")[]): number {
@@ -46,6 +47,23 @@ function userPrefScore(
   return Math.min(score, 100);
 }
 
+// 킥오프가 임박할수록 높은 점수. "오늘 볼 경기" 철학에 맞춰
+// 당장 시작하는 경기를 강하게 끌어올린다.
+// 이미 시작/종료된 경기는 0점이라 upcoming에서 자연 도태.
+function timeProximityScore(kickoffAt: string): number {
+  const hoursUntil =
+    (new Date(kickoffAt).getTime() - Date.now()) / 3_600_000;
+
+  if (hoursUntil < 0) return 0;
+  if (hoursUntil <= 2) return 100;
+  if (hoursUntil <= 6) return 90;
+  if (hoursUntil <= 12) return 75;
+  if (hoursUntil <= 24) return 55;
+  if (hoursUntil <= 48) return 30;
+  if (hoursUntil <= 72) return 15;
+  return 5;
+}
+
 export function scoreMatch(
   match: MatchDTO,
   prefs?: UserPreferencesDTO | null,
@@ -59,13 +77,15 @@ export function scoreMatch(
     2;
   const clash = styleClashScore(match.homeTeam.style, match.awayTeam.style);
   const pref = userPrefScore(match, prefs);
+  const time = timeProximityScore(match.kickoffAt);
 
   return (
     importance * WEIGHTS.importance +
     popularity * WEIGHTS.popularity +
     form * WEIGHTS.form +
     clash * WEIGHTS.styleClash +
-    pref * WEIGHTS.userPref
+    pref * WEIGHTS.userPref +
+    time * WEIGHTS.timeProximity
   );
 }
 

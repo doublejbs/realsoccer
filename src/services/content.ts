@@ -6,57 +6,63 @@ import {
 } from "./football-data-context";
 import { generateMatchMeta, generateSummary } from "./llm";
 
-type Kind = "reason" | "watch_points" | "headline" | "tags" | "summary" | "context_data";
+type Kind =
+  | "reason"
+  | "watch_points"
+  | "headline"
+  | "tags"
+  | "summary"
+  | "context_data";
 
 export type EnsureResult = "cached" | "generated" | "failed" | "skipped";
 
-// --- 읽기 전용 (페이지·API) ---
-async function getFromCache(match: MatchDTO, kind: Kind): Promise<unknown | null> {
+export interface MatchContentBundle {
+  reasons: string[] | null;
+  watchPoints: string[] | null;
+  headline: string | null;
+  tags: string[] | null;
+  summary: string[] | null;
+  contextData: MatchContextData | null;
+}
+
+// --- 읽기 (유저 경로) ---
+// 한 경기의 모든 컨텐츠를 1회 쿼리로 가져온다. pooler 커넥션 1개만 점유.
+export async function getMatchContent(
+  match: MatchDTO,
+): Promise<MatchContentBundle> {
+  let rows: { kind: string; content: unknown }[] = [];
   try {
-    const existing = await prisma.matchContent.findUnique({
-      where: { matchId_kind: { matchId: match.id, kind } },
+    rows = await prisma.matchContent.findMany({
+      where: { matchId: match.id },
+      select: { kind: true, content: true },
     });
-    return existing ? existing.content : null;
   } catch (err) {
-    console.error(`[content] DB read failed for ${kind}`, err);
-    return null;
+    console.error("[content] DB read failed", err);
   }
-}
 
-export async function getReasons(match: MatchDTO): Promise<string[] | null> {
-  const val = await getFromCache(match, "reason");
-  return val as string[] | null;
-}
+  const byKind = new Map<string, unknown>();
+  for (const r of rows) byKind.set(r.kind, r.content);
 
-export async function getWatchPoints(match: MatchDTO): Promise<string[] | null> {
-  const val = await getFromCache(match, "watch_points");
-  return val as string[] | null;
-}
+  const headlineArr = byKind.get("headline") as string[] | undefined;
 
-export async function getHeadline(match: MatchDTO): Promise<string | null> {
-  const val = await getFromCache(match, "headline");
-  if (!val) return null;
-  return (val as string[])[0] ?? null;
-}
-
-export async function getTags(match: MatchDTO): Promise<string[] | null> {
-  const val = await getFromCache(match, "tags");
-  return val as string[] | null;
-}
-
-export async function getSummary(match: MatchDTO): Promise<string[] | null> {
-  const val = await getFromCache(match, "summary");
-  return val as string[] | null;
-}
-
-export async function getContextData(match: MatchDTO): Promise<MatchContextData | null> {
-  const val = await getFromCache(match, "context_data");
-  return val as MatchContextData | null;
+  return {
+    reasons: (byKind.get("reason") as string[] | undefined) ?? null,
+    watchPoints: (byKind.get("watch_points") as string[] | undefined) ?? null,
+    headline: headlineArr?.[0] ?? null,
+    tags: (byKind.get("tags") as string[] | undefined) ?? null,
+    summary: (byKind.get("summary") as string[] | undefined) ?? null,
+    contextData:
+      (byKind.get("context_data") as MatchContextData | undefined) ?? null,
+  };
 }
 
 // --- 쓰기 전용 (cron 전용) ---
 
-async function upsertKind(matchId: string, kind: Kind, content: object | string[] | string) {
+async function upsertKind(
+  matchId: string,
+  kind: Kind,
+  content: object | string[] | string,
+) {
   await prisma.matchContent.upsert({
     where: { matchId_kind: { matchId, kind } },
     create: { matchId, kind, content },
@@ -65,13 +71,23 @@ async function upsertKind(matchId: string, kind: Kind, content: object | string[
 }
 
 // headline + tags + reasons + watchPoints 한 번에 (Claude 1회 호출).
-export async function ensureMatchMeta(match: MatchDTO): Promise<EnsureResult> {
+export async function ensureMatchMeta(
+  match: MatchDTO,
+): Promise<EnsureResult> {
   try {
     const [r, w, h, t] = await Promise.all([
-      prisma.matchContent.findUnique({ where: { matchId_kind: { matchId: match.id, kind: "reason" } } }),
-      prisma.matchContent.findUnique({ where: { matchId_kind: { matchId: match.id, kind: "watch_points" } } }),
-      prisma.matchContent.findUnique({ where: { matchId_kind: { matchId: match.id, kind: "headline" } } }),
-      prisma.matchContent.findUnique({ where: { matchId_kind: { matchId: match.id, kind: "tags" } } }),
+      prisma.matchContent.findUnique({
+        where: { matchId_kind: { matchId: match.id, kind: "reason" } },
+      }),
+      prisma.matchContent.findUnique({
+        where: { matchId_kind: { matchId: match.id, kind: "watch_points" } },
+      }),
+      prisma.matchContent.findUnique({
+        where: { matchId_kind: { matchId: match.id, kind: "headline" } },
+      }),
+      prisma.matchContent.findUnique({
+        where: { matchId_kind: { matchId: match.id, kind: "tags" } },
+      }),
     ]);
     if (r && w && h && t) return "cached";
   } catch (err) {
@@ -94,7 +110,9 @@ export async function ensureMatchMeta(match: MatchDTO): Promise<EnsureResult> {
 }
 
 // 폼 + 순위 데이터 저장 (football-data, Claude 아님).
-export async function ensureContextData(match: MatchDTO): Promise<EnsureResult> {
+export async function ensureContextData(
+  match: MatchDTO,
+): Promise<EnsureResult> {
   try {
     const existing = await prisma.matchContent.findUnique({
       where: { matchId_kind: { matchId: match.id, kind: "context_data" } },
@@ -111,17 +129,29 @@ export async function ensureContextData(match: MatchDTO): Promise<EnsureResult> 
       fetchStandings(match.leagueCode).catch(() => null),
     ]);
 
-    const homeRow = standings?.find((r) => String(r.team.id) === match.homeTeam.id);
-    const awayRow = standings?.find((r) => String(r.team.id) === match.awayTeam.id);
+    const homeRow = standings?.find(
+      (r) => String(r.team.id) === match.homeTeam.id,
+    );
+    const awayRow = standings?.find(
+      (r) => String(r.team.id) === match.awayTeam.id,
+    );
 
     const data: MatchContextData = {
       homeForm: homeForm.map((f) => f.result),
       awayForm: awayForm.map((f) => f.result),
       homeStanding: homeRow
-        ? { position: homeRow.position, points: homeRow.points, played: homeRow.playedGames }
+        ? {
+            position: homeRow.position,
+            points: homeRow.points,
+            played: homeRow.playedGames,
+          }
         : undefined,
       awayStanding: awayRow
-        ? { position: awayRow.position, points: awayRow.points, played: awayRow.playedGames }
+        ? {
+            position: awayRow.position,
+            points: awayRow.points,
+            played: awayRow.playedGames,
+          }
         : undefined,
     };
 

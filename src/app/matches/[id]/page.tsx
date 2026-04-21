@@ -6,14 +6,7 @@ import { UserMenu } from "@/components/UserMenu";
 import { MatchHero } from "@/components/MatchHero";
 import { requireUser } from "@/lib/auth";
 import { getMatchById } from "@/services/matches";
-import {
-  getContextData,
-  getHeadline,
-  getReasons,
-  getSummary,
-  getTags,
-  getWatchPoints,
-} from "@/services/content";
+import { getMatchContent } from "@/services/content";
 import type { MatchContextData } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -81,18 +74,12 @@ export default async function MatchDetailPage({
   const match = await getMatchById(params.id);
   if (!match) notFound();
 
-  const [reasons, watchPoints, headline, tags, contextData, summary] =
-    await Promise.all([
-      getReasons(match),
-      getWatchPoints(match),
-      getHeadline(match),
-      getTags(match),
-      getContextData(match),
-      match.status === "FINISHED" ? getSummary(match) : Promise.resolve(null),
-    ]);
+  const { reasons, watchPoints, headline, tags, contextData, summary } =
+    await getMatchContent(match);
 
   const sectionIndex = { reasons: "01", watchPoints: "02", summary: "03" };
-  const hasSummary = !!summary;
+  // 종료 경기가 아니면 summary는 설령 DB에 있더라도 표시하지 않음.
+  const hasSummary = match.status === "FINISHED" && !!summary;
 
   return (
     <div>

@@ -1,11 +1,9 @@
 import Link from "next/link";
 import { TopBar } from "@/components/ui/TopBar";
 import { UserMenu } from "@/components/UserMenu";
-import { TeamCrest } from "@/components/TeamCrest";
+import { MatchRow } from "@/components/MatchRow";
 import { requireUser } from "@/lib/auth";
 import { getFinishedMatchesPage } from "@/services/matches";
-import { formatKickoff } from "@/lib/time";
-import type { MatchDTO } from "@/types";
 
 export const dynamic = "force-dynamic";
 
@@ -68,7 +66,7 @@ export default async function FinishedPage({
         ) : (
           <ul className="mt-8 border-t border-hairline rise rise-3">
             {matches.map((m, i) => (
-              <FinishedRow
+              <MatchRow
                 key={m.id}
                 match={m}
                 index={(page - 1) * PER_PAGE + i + 1}
@@ -129,49 +127,3 @@ function PageLink({
   );
 }
 
-function FinishedRow({ match, index }: { match: MatchDTO; index: number }) {
-  const k = formatKickoff(match.kickoffAt);
-  return (
-    <li className="border-b border-hairline">
-      <Link
-        href={`/matches/${match.id}`}
-        className="group flex items-center gap-3 py-4 transition-colors hover:bg-surface"
-      >
-        <span className="shrink-0 w-8 font-mono text-xs text-ink-faint num">
-          {String(index).padStart(2, "0")}
-        </span>
-        <div className="flex shrink-0 items-center gap-1">
-          <TeamCrest
-            src={match.homeTeam.crestUrl}
-            alt={match.homeTeam.name}
-            size={22}
-          />
-          <TeamCrest
-            src={match.awayTeam.crestUrl}
-            alt={match.awayTeam.name}
-            size={22}
-          />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0">
-            <span className="font-display text-base font-semibold text-ink sm:text-lg">
-              {match.homeTeam.shortName}
-            </span>
-            <span className="font-mono text-sm text-ink-dim num">
-              {match.homeScore}-{match.awayScore}
-            </span>
-            <span className="font-display text-base font-semibold text-ink sm:text-lg">
-              {match.awayTeam.shortName}
-            </span>
-          </div>
-          <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
-            {match.leagueCode} · {k.date} · 5줄 요약
-          </div>
-        </div>
-        <span className="shrink-0 font-mono text-xs text-ink-faint transition-colors group-hover:text-accent">
-          →
-        </span>
-      </Link>
-    </li>
-  );
-}

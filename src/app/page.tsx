@@ -1,10 +1,9 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { TopBar } from "@/components/ui/TopBar";
 import { UserMenu } from "@/components/UserMenu";
 import { MatchHero } from "@/components/MatchHero";
+import { MatchRow } from "@/components/MatchRow";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { TeamCrest } from "@/components/TeamCrest";
 import { OnboardingBanner } from "@/components/OnboardingBanner";
 import { RecentFinishedList } from "@/components/RecentFinishedList";
 import { requireUser } from "@/lib/auth";
@@ -13,8 +12,7 @@ import {
   getTodaysMatches,
 } from "@/services/matches";
 import { rankMatches } from "@/services/recommendation";
-import { getHeadline, getReasons, getTags } from "@/services/content";
-import { formatKickoff } from "@/lib/time";
+import { getMatchContent } from "@/services/content";
 import type { MatchDTO, UserPreferencesDTO } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -124,7 +122,7 @@ async function TodayMatchesSection({
           </div>
           <ul className="border-t border-hairline">
             {rest.map((r, i) => (
-              <SecondaryMatchRow key={r.match.id} index={i + 2} ranked={r} />
+              <MatchRow key={r.match.id} match={r.match} index={i + 2} />
             ))}
           </ul>
         </section>
@@ -144,11 +142,7 @@ async function RecentFinishedSection() {
 }
 
 async function TopMatchContent({ match, href }: { match: MatchDTO; href: string }) {
-  const [reasons, headline, tags] = await Promise.all([
-    getReasons(match),
-    getHeadline(match),
-    getTags(match),
-  ]);
+  const { reasons, headline, tags } = await getMatchContent(match);
   return (
     <MatchHero
       match={match}
@@ -172,30 +166,39 @@ function TodayMatchesSkeleton() {
           <span className="pointer-events-none absolute -bottom-px -left-px size-2 border-b border-l border-accent" />
           <span className="pointer-events-none absolute -bottom-px -right-px size-2 border-b border-r border-accent" />
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <Skeleton className="h-4 w-28 rounded-none" />
-            <Skeleton className="h-4 w-16 rounded-none" />
           </div>
 
-          <div className="mt-6">
-            <Skeleton className="h-3 w-8 rounded-none" />
-            <div className="mt-2 flex items-center gap-4">
-              <Skeleton className="size-11 shrink-0 rounded-none" />
-              <Skeleton className="h-9 w-40 rounded-none" />
+          {/* versus layout placeholder */}
+          <div className="mt-8 grid grid-cols-[1fr_auto_1fr] items-start gap-4 sm:mt-10 sm:gap-8">
+            <div className="flex flex-col items-center gap-3">
+              <Skeleton className="size-16 rounded-none" />
+              <Skeleton className="h-2.5 w-8 rounded-none" />
+              <Skeleton className="h-5 w-20 rounded-none" />
+            </div>
+            <div className="flex h-16 items-center sm:h-20">
+              <span className="font-display text-2xl italic text-ink-faint sm:text-3xl">
+                vs
+              </span>
+            </div>
+            <div className="flex flex-col items-center gap-3">
+              <Skeleton className="size-16 rounded-none" />
+              <Skeleton className="h-2.5 w-8 rounded-none" />
+              <Skeleton className="h-5 w-20 rounded-none" />
             </div>
           </div>
 
-          <div className="mt-5 flex items-center gap-3">
-            <span className="h-px flex-1 bg-hairline" />
-            <span className="font-display text-xl italic text-ink-faint">vs</span>
-            <span className="h-px flex-1 bg-hairline" />
-          </div>
-
-          <div className="mt-6">
-            <Skeleton className="h-3 w-8 rounded-none" />
-            <div className="mt-2 flex items-center gap-4">
-              <Skeleton className="size-11 shrink-0 rounded-none" />
-              <Skeleton className="h-9 w-40 rounded-none" />
+          {/* kickoff block placeholder */}
+          <div className="mt-6 flex items-stretch justify-between gap-4 border-y border-hairline py-4">
+            <div className="space-y-2">
+              <Skeleton className="h-2.5 w-16 rounded-none" />
+              <Skeleton className="h-9 w-24 rounded-none sm:h-11" />
+            </div>
+            <div className="space-y-2 text-right">
+              <Skeleton className="ml-auto h-2.5 w-10 rounded-none" />
+              <Skeleton className="ml-auto h-5 w-24 rounded-none" />
+              <Skeleton className="ml-auto h-2.5 w-14 rounded-none" />
             </div>
           </div>
 
@@ -218,17 +221,7 @@ function TodayMatchesSkeleton() {
         </div>
         <ul className="border-t border-hairline">
           {[0, 1, 2].map((i) => (
-            <li key={i} className="flex items-center gap-3 border-b border-hairline py-4">
-              <Skeleton className="h-3 w-5 shrink-0 rounded-none" />
-              <div className="flex shrink-0 items-center gap-1">
-                <Skeleton className="size-[22px] rounded-none" />
-                <Skeleton className="size-[22px] rounded-none" />
-              </div>
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <Skeleton className="h-4 w-36 rounded-none" />
-                <Skeleton className="h-3 w-24 rounded-none" />
-              </div>
-            </li>
+            <MatchRowSkeleton key={i} />
           ))}
         </ul>
       </div>
@@ -245,79 +238,38 @@ function RecentFinishedSkeleton() {
       </div>
       <ul className="border-t border-hairline">
         {[0, 1].map((i) => (
-          <li key={i} className="flex items-center gap-3 border-b border-hairline py-4">
-            <Skeleton className="h-3 w-5 shrink-0 rounded-none" />
-            <div className="flex shrink-0 items-center gap-1">
-              <Skeleton className="size-[22px] rounded-none" />
-              <Skeleton className="size-[22px] rounded-none" />
-            </div>
-            <div className="min-w-0 flex-1 space-y-1.5">
-              <Skeleton className="h-4 w-36 rounded-none" />
-              <Skeleton className="h-3 w-24 rounded-none" />
-            </div>
-          </li>
+          <MatchRowSkeleton key={i} />
         ))}
       </ul>
     </div>
   );
 }
 
-// --- 공통 컴포넌트 ---
-
-function SecondaryMatchRow({
-  index,
-  ranked,
-}: {
-  index: number;
-  ranked: { match: MatchDTO; score: number };
-}) {
-  const m = ranked.match;
-  const k = formatKickoff(m.kickoffAt);
-
+function MatchRowSkeleton() {
   return (
-    <li className="border-b border-hairline">
-      <Link
-        href={`/matches/${m.id}`}
-        className="group flex items-center gap-3 py-4 transition-colors hover:bg-surface"
-      >
-        <span className="shrink-0 w-6 font-mono text-xs text-ink-faint num">
-          {String(index).padStart(2, "0")}
-        </span>
-        <div className="flex shrink-0 items-center gap-1">
-          <TeamCrest
-            src={m.homeTeam.crestUrl}
-            alt={m.homeTeam.name}
-            size={22}
-          />
-          <TeamCrest
-            src={m.awayTeam.crestUrl}
-            alt={m.awayTeam.name}
-            size={22}
-          />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0">
-            <span className="font-display text-base font-semibold text-ink sm:text-lg">
-              {m.homeTeam.shortName}
-            </span>
-            <span className="font-display text-sm italic text-ink-faint">
-              vs
-            </span>
-            <span className="font-display text-base font-semibold text-ink sm:text-lg">
-              {m.awayTeam.shortName}
-            </span>
+    <li className="flex items-start gap-3 border-b border-hairline py-4">
+      <Skeleton className="mt-[9px] h-3 w-6 shrink-0 rounded-none" />
+      <div className="min-w-0 flex-1">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-start gap-2">
+          <div className="flex flex-col items-center gap-1.5">
+            <Skeleton className="size-7 rounded-none" />
+            <Skeleton className="h-4 w-16 rounded-none" />
           </div>
-          <div className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
-            {m.leagueCode} · {k.date} {k.time}
+          <div className="flex h-7 items-center">
+            <Skeleton className="h-4 w-10 rounded-none" />
+          </div>
+          <div className="flex flex-col items-center gap-1.5">
+            <Skeleton className="size-7 rounded-none" />
+            <Skeleton className="h-4 w-16 rounded-none" />
           </div>
         </div>
-        <span className="shrink-0 font-mono text-xs text-ink-faint transition-colors group-hover:text-accent">
-          →
-        </span>
-      </Link>
+        <Skeleton className="mx-auto mt-2 h-2.5 w-24 rounded-none" />
+      </div>
     </li>
   );
 }
+
+// --- 공통 컴포넌트 ---
 
 function EmptyState() {
   return (

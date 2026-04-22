@@ -94,13 +94,11 @@ export async function GET(req: Request) {
     mapPool(topFinished, CLAUDE_CONCURRENCY, (m) => ensureSummary(m)),
   ]);
 
-  // 새로 생성된 경기만 DB upsert.
-  const recommendToSave = topRecommend.filter((_, i) => metaResults[i] === "generated");
-  const finishedToSave = topFinished.filter((_, i) => summaryResults[i] === "generated");
-
+  // content 생성 여부와 무관하게 모든 경기의 status/score를 항상 동기화.
+  // "generated"만 저장하면 캐시된 경기의 status가 FINISHED로 업데이트되지 않는 버그 방지.
   const [upcomingUpserts, finishedUpserts] = await Promise.all([
-    upsertMatches(recommendToSave),
-    upsertMatches(finishedToSave),
+    upsertMatches(topRecommend),
+    upsertMatches(topFinished),
   ]);
 
   report.upserted.upcoming = upcomingUpserts;

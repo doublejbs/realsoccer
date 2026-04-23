@@ -1,4 +1,5 @@
 import type { MatchDTO } from "@/types";
+import { fetchLeagueTopPlayers, filterTeamPlayers } from "./api-football";
 
 const BASE = "https://api.football-data.org/v4";
 
@@ -140,6 +141,8 @@ function formatContext(
   awayForm: FormEntry[],
   standings: StandingRow[] | null,
   h2h: H2HResponse | null,
+  homePlayers: { name: string; goals: number; assists: number; rating: number | null }[],
+  awayPlayers: { name: string; goals: number; assists: number; rating: number | null }[],
 ): string {
   const parts: string[] = [];
 
@@ -195,15 +198,35 @@ function formatContext(
     }
   }
 
+  const formatPlayer = (p: { name: string; goals: number; assists: number; rating: number | null }) => {
+    const rating = p.rating != null ? ` 평점 ${p.rating.toFixed(1)}` : "";
+    return `- ${p.name}: ${p.goals}골 ${p.assists}어시스트${rating}`;
+  };
+
+  if (homePlayers.length > 0) {
+    if (parts.length > 0) parts.push("");
+    parts.push(`[${match.homeTeam.name} 시즌 주목 선수]`);
+    homePlayers.forEach((p) => parts.push(formatPlayer(p)));
+  }
+
+  if (awayPlayers.length > 0) {
+    if (parts.length > 0) parts.push("");
+    parts.push(`[${match.awayTeam.name} 시즌 주목 선수]`);
+    awayPlayers.forEach((p) => parts.push(formatPlayer(p)));
+  }
+
   return parts.join("\n");
 }
 
 export async function enrichMatchContext(match: MatchDTO): Promise<string> {
-  const [homeForm, awayForm, standings, h2h] = await Promise.all([
+  const [homeForm, awayForm, standings, h2h, allPlayers] = await Promise.all([
     fetchTeamForm(match.homeTeam.id).catch(() => [] as FormEntry[]),
     fetchTeamForm(match.awayTeam.id).catch(() => [] as FormEntry[]),
     fetchStandings(match.leagueCode).catch(() => null),
     fetchHeadToHead(match.externalMatchId).catch(() => null),
+    fetchLeagueTopPlayers(match.leagueCode).catch(() => []),
   ]);
-  return formatContext(match, homeForm, awayForm, standings, h2h);
+  const homePlayers = filterTeamPlayers(allPlayers, match.homeTeam.name);
+  const awayPlayers = filterTeamPlayers(allPlayers, match.awayTeam.name);
+  return formatContext(match, homeForm, awayForm, standings, h2h, homePlayers, awayPlayers);
 }

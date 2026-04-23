@@ -1,31 +1,38 @@
-const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
+const KST = "Asia/Seoul";
+
+// "sv" 로케일은 YYYY-MM-DD 형식을 반환 — 날짜 비교에 활용
+function kstDateStr(d: Date): string {
+  return new Intl.DateTimeFormat("sv", { timeZone: KST }).format(d);
+}
 
 export function formatKickoff(iso: string) {
   const d = new Date(iso);
   const now = new Date();
 
-  const sameDay =
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate();
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const isTomorrow =
-    d.getFullYear() === tomorrow.getFullYear() &&
-    d.getMonth() === tomorrow.getMonth() &&
-    d.getDate() === tomorrow.getDate();
+  const kstDate = kstDateStr(d);
+  const todayDate = kstDateStr(now);
+  // DST 없는 KST라 +24h = 정확히 내일
+  const tomorrowDate = kstDateStr(new Date(now.getTime() + 86_400_000));
 
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const dateLabel = sameDay
-    ? "오늘"
-    : isTomorrow
-      ? "내일"
-      : `${d.getMonth() + 1}/${d.getDate()}`;
+  const sameDay = kstDate === todayDate;
+  const isTomorrow = kstDate === tomorrowDate;
 
-  const weekday = WEEKDAY_KO[d.getDay()];
+  const [, m, day] = kstDate.split("-");
+  const dateLabel = sameDay ? "오늘" : isTomorrow ? "내일" : `${parseInt(m)}/${parseInt(day)}`;
 
-  return { time: `${hh}:${mm}`, date: dateLabel, weekday, raw: d };
+  const time = new Intl.DateTimeFormat("en", {
+    timeZone: KST,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(d);
+
+  const weekday = new Intl.DateTimeFormat("ko", {
+    timeZone: KST,
+    weekday: "narrow",
+  }).format(d);
+
+  return { time, date: dateLabel, weekday, raw: d };
 }
 
 export function hoursUntil(iso: string): number {

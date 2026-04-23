@@ -200,9 +200,18 @@ function TeamContextRow({
   ctx: MatchContextData;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-4">
-      <TeamCtx name={home} form={ctx.homeForm} standing={ctx.homeStanding} side="home" />
-      <TeamCtx name={away} form={ctx.awayForm} standing={ctx.awayStanding} side="away" />
+    <div className="flex flex-col gap-6">
+      <div className="grid grid-cols-2 gap-4">
+        <TeamCtx name={home} form={ctx.homeForm} standing={ctx.homeStanding} side="home" />
+        <TeamCtx name={away} form={ctx.awayForm} standing={ctx.awayStanding} side="away" />
+      </div>
+
+      {(ctx.homeTopPlayers?.length || ctx.awayTopPlayers?.length) ? (
+        <div className="grid grid-cols-2 gap-4 border-t border-hairline pt-5">
+          <PlayerList players={ctx.homeTopPlayers} side="home" />
+          <PlayerList players={ctx.awayTopPlayers} side="away" />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -242,6 +251,37 @@ function TeamCtx({
           {standing.position}위 · {standing.points}점
         </span>
       )}
+    </div>
+  );
+}
+
+function PlayerList({
+  players,
+  side,
+}: {
+  players?: { name: string; goals: number; assists: number; rating: number | null }[];
+  side: "home" | "away";
+}) {
+  if (!players?.length) return <div />;
+  const align = side === "away" ? "items-end text-right" : "items-start";
+  return (
+    <div className={`flex flex-col gap-2 ${align}`}>
+      <span className="font-mono text-[9px] uppercase tracking-[0.2em] text-ink-faint">
+        주목 선수
+      </span>
+      {players.map((p) => (
+        <div key={p.name} className={`flex flex-col gap-0.5 ${align}`}>
+          <span className="font-display text-sm font-semibold text-ink leading-tight">
+            {p.name}
+          </span>
+          <span className="font-mono text-[10px] text-ink-mute num">
+            {p.goals}G {p.assists}A
+            {p.rating != null && (
+              <span className="ml-1.5 text-accent">{p.rating.toFixed(1)}</span>
+            )}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

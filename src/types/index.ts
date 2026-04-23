@@ -43,6 +43,8 @@ export interface MatchContextData {
   awayForm: ("W" | "D" | "L")[];
   homeStanding?: { position: number; points: number; played: number };
   awayStanding?: { position: number; points: number; played: number };
+  homeTopPlayers?: { name: string; goals: number; assists: number; rating: number | null }[];
+  awayTopPlayers?: { name: string; goals: number; assists: number; rating: number | null }[];
 }
 
 export interface UserPreferencesDTO {

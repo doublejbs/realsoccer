@@ -4,6 +4,7 @@ import {
   fetchStandings,
   fetchTeamForm,
 } from "./football-data-context";
+import { fetchLeagueTopPlayers, filterTeamPlayers } from "./api-football";
 import { generateMatchMeta, generateSummary } from "./llm";
 
 type Kind = "reason" | "watch_points" | "headline" | "tags" | "summary" | "context_data";
@@ -105,14 +106,18 @@ export async function ensureContextData(match: MatchDTO): Promise<EnsureResult> 
   }
 
   try {
-    const [homeForm, awayForm, standings] = await Promise.all([
+    const [homeForm, awayForm, standings, allPlayers] = await Promise.all([
       fetchTeamForm(match.homeTeam.id).catch(() => []),
       fetchTeamForm(match.awayTeam.id).catch(() => []),
       fetchStandings(match.leagueCode).catch(() => null),
+      fetchLeagueTopPlayers(match.leagueCode).catch(() => []),
     ]);
 
     const homeRow = standings?.find((r) => String(r.team.id) === match.homeTeam.id);
     const awayRow = standings?.find((r) => String(r.team.id) === match.awayTeam.id);
+
+    const homePlayers = filterTeamPlayers(allPlayers, match.homeTeam.name);
+    const awayPlayers = filterTeamPlayers(allPlayers, match.awayTeam.name);
 
     const data: MatchContextData = {
       homeForm: homeForm.map((f) => f.result),
@@ -123,6 +128,8 @@ export async function ensureContextData(match: MatchDTO): Promise<EnsureResult> 
       awayStanding: awayRow
         ? { position: awayRow.position, points: awayRow.points, played: awayRow.playedGames }
         : undefined,
+      homeTopPlayers: homePlayers.length > 0 ? homePlayers : undefined,
+      awayTopPlayers: awayPlayers.length > 0 ? awayPlayers : undefined,
     };
 
     await upsertKind(match.id, "context_data", data);

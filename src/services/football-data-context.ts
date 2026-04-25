@@ -1,5 +1,10 @@
-import type { MatchDTO } from "@/types";
-import { fetchLeagueTopPlayers, filterTeamPlayers } from "./api-football";
+import type { MatchDTO, TeamStatistics } from "@/types";
+import {
+  fetchLeagueTopPlayers,
+  fetchTeamStatistics,
+  filterTeamPlayers,
+  findTeamId,
+} from "./api-football";
 
 const BASE = "https://api.football-data.org/v4";
 
@@ -71,7 +76,6 @@ export async function fetchTeamForm(
   if (!res.ok) return [];
   const data = (await res.json()) as { matches: FDMatch[] };
   const idNum = Number(teamId);
-  // 최신 → 과거 순
   const sorted = [...data.matches].sort(
     (a, b) => new Date(b.utcDate).getTime() - new Date(a.utcDate).getTime(),
   );
@@ -135,14 +139,28 @@ function signed(n: number): string {
   return n > 0 ? `+${n}` : String(n);
 }
 
+function formatTeamStats(teamName: string, stats: TeamStatistics): string[] {
+  const lines = [`[${teamName} 시즌 팀 통계]`];
+  lines.push(`- 경기당 득점: ${stats.goalsForAvg.toFixed(1)}골`);
+  lines.push(`- 경기당 실점: ${stats.goalsAgainstAvg.toFixed(1)}골`);
+  lines.push(`- 무실점 경기: ${stats.cleanSheets}경기`);
+  if (stats.homePlayed > 0)
+    lines.push(`- 홈 성적: ${stats.homeWins}승 / ${stats.homePlayed}경기`);
+  if (stats.awayPlayed > 0)
+    lines.push(`- 원정 성적: ${stats.awayWins}승 / ${stats.awayPlayed}경기`);
+  return lines;
+}
+
 function formatContext(
   match: MatchDTO,
   homeForm: FormEntry[],
   awayForm: FormEntry[],
   standings: StandingRow[] | null,
   h2h: H2HResponse | null,
-  homePlayers: { name: string; goals: number; assists: number; rating: number | null }[],
-  awayPlayers: { name: string; goals: number; assists: number; rating: number | null }[],
+  homePlayers: { name: string; goals: number; assists: number; rating: number | null; position?: string }[],
+  awayPlayers: { name: string; goals: number; assists: number; rating: number | null; position?: string }[],
+  homeStats: TeamStatistics | null,
+  awayStats: TeamStatistics | null,
 ): string {
   const parts: string[] = [];
 
@@ -158,25 +176,19 @@ function formatContext(
   }
 
   if (standings) {
-    const homeRow = standings.find(
-      (r) => String(r.team.id) === match.homeTeam.id,
-    );
-    const awayRow = standings.find(
-      (r) => String(r.team.id) === match.awayTeam.id,
-    );
+    const homeRow = standings.find((r) => String(r.team.id) === match.homeTeam.id);
+    const awayRow = standings.find((r) => String(r.team.id) === match.awayTeam.id);
     if (homeRow || awayRow) {
       if (parts.length > 0) parts.push("");
       parts.push(`[리그 순위 현황]`);
-      if (homeRow) {
+      if (homeRow)
         parts.push(
           `- ${match.homeTeam.name}: ${homeRow.position}위 · 승점 ${homeRow.points} · ${homeRow.won}승 ${homeRow.draw}무 ${homeRow.lost}패 · 득실 ${signed(homeRow.goalDifference)}`,
         );
-      }
-      if (awayRow) {
+      if (awayRow)
         parts.push(
           `- ${match.awayTeam.name}: ${awayRow.position}위 · 승점 ${awayRow.points} · ${awayRow.won}승 ${awayRow.draw}무 ${awayRow.lost}패 · 득실 ${signed(awayRow.goalDifference)}`,
         );
-      }
     }
   }
 
@@ -186,7 +198,7 @@ function formatContext(
     parts.push(
       `- ${match.homeTeam.name} 승: ${h2h.aggregates.homeTeam.wins} · ${match.awayTeam.name} 승: ${h2h.aggregates.awayTeam.wins} · 무: ${h2h.aggregates.homeTeam.draws}`,
     );
-    if (h2h.matches && h2h.matches.length > 0) {
+    if (h2h.matches?.length > 0) {
       parts.push(`- 최근 맞대결:`);
       h2h.matches.slice(0, 3).forEach((m) => {
         const hs = m.score.fullTime.home ?? 0;
@@ -198,9 +210,10 @@ function formatContext(
     }
   }
 
-  const formatPlayer = (p: { name: string; goals: number; assists: number; rating: number | null }) => {
+  const formatPlayer = (p: { name: string; goals: number; assists: number; rating: number | null; position?: string }) => {
+    const pos = p.position ? ` [${p.position}]` : "";
     const rating = p.rating != null ? ` 평점 ${p.rating.toFixed(1)}` : "";
-    return `- ${p.name}: ${p.goals}골 ${p.assists}어시스트${rating}`;
+    return `- ${p.name}${pos}: ${p.goals}골 ${p.assists}어시스트${rating}`;
   };
 
   if (homePlayers.length > 0) {
@@ -215,6 +228,16 @@ function formatContext(
     awayPlayers.forEach((p) => parts.push(formatPlayer(p)));
   }
 
+  if (homeStats) {
+    if (parts.length > 0) parts.push("");
+    formatTeamStats(match.homeTeam.name, homeStats).forEach((l) => parts.push(l));
+  }
+
+  if (awayStats) {
+    if (parts.length > 0) parts.push("");
+    formatTeamStats(match.awayTeam.name, awayStats).forEach((l) => parts.push(l));
+  }
+
   return parts.join("\n");
 }
 
@@ -226,7 +249,17 @@ export async function enrichMatchContext(match: MatchDTO): Promise<string> {
     fetchHeadToHead(match.externalMatchId).catch(() => null),
     fetchLeagueTopPlayers(match.leagueCode).catch(() => []),
   ]);
+
   const homePlayers = filterTeamPlayers(allPlayers, match.homeTeam.name);
   const awayPlayers = filterTeamPlayers(allPlayers, match.awayTeam.name);
-  return formatContext(match, homeForm, awayForm, standings, h2h, homePlayers, awayPlayers);
+
+  const homeTeamId = findTeamId(allPlayers, match.homeTeam.name);
+  const awayTeamId = findTeamId(allPlayers, match.awayTeam.name);
+
+  const [homeStats, awayStats] = await Promise.all([
+    homeTeamId ? fetchTeamStatistics(homeTeamId, match.leagueCode).catch(() => null) : null,
+    awayTeamId ? fetchTeamStatistics(awayTeamId, match.leagueCode).catch(() => null) : null,
+  ]);
+
+  return formatContext(match, homeForm, awayForm, standings, h2h, homePlayers, awayPlayers, homeStats, awayStats);
 }

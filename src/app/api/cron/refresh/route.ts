@@ -6,7 +6,7 @@ import {
 import { rankMatches } from "@/services/recommendation";
 import {
   ensureContextData,
-  ensureMatchMeta,
+  ensureMatchEditorial,
   ensureSummary,
   type EnsureResult,
 } from "@/services/content";
@@ -65,7 +65,7 @@ export async function GET(req: Request) {
   const startedAt = Date.now();
   const report = {
     upserted: { upcoming: 0, finished: 0 },
-    recommendations: { picked: 0, meta: {} as Record<string, number>, context: {} as Record<string, number> },
+    recommendations: { picked: 0, editorial: {} as Record<string, number>, context: {} as Record<string, number> },
     summaries: { picked: 0, summary: {} as Record<string, number> },
     durationMs: 0,
   };
@@ -88,8 +88,8 @@ export async function GET(req: Request) {
   // 카테고리별 pool 분리:
   // meta + summary = Claude 호출 → 각 최대 5개 (ITPM 초과 방지)
   // context = football-data → 별도 pool, Claude와 무관
-  const [metaResults, contextResults, summaryResults] = await Promise.all([
-    mapPool(topRecommend, CLAUDE_CONCURRENCY, (m) => ensureMatchMeta(m)),
+  const [editorialResults, contextResults, summaryResults] = await Promise.all([
+    mapPool(topRecommend, CLAUDE_CONCURRENCY, (m) => ensureMatchEditorial(m)),
     mapPool(topRecommend, DATA_CONCURRENCY, (m) => ensureContextData(m)),
     mapPool(topFinished, CLAUDE_CONCURRENCY, (m) => ensureSummary(m)),
   ]);
@@ -103,7 +103,7 @@ export async function GET(req: Request) {
 
   report.upserted.upcoming = upcomingUpserts;
   report.upserted.finished = finishedUpserts;
-  report.recommendations.meta = tally(metaResults);
+  report.recommendations.editorial = tally(editorialResults);
   report.recommendations.context = tally(contextResults);
   report.summaries.summary = tally(summaryResults);
   report.durationMs = Date.now() - startedAt;

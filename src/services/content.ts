@@ -4,8 +4,13 @@ import {
   fetchStandings,
   fetchTeamForm,
 } from "./football-data-context";
-import { fetchLeagueTopPlayers, filterTeamPlayers } from "./api-football";
-import { generateMatchMeta, generateSummary } from "./llm";
+import {
+  fetchLeagueTopPlayers,
+  fetchTeamStatistics,
+  filterTeamPlayers,
+  findTeamId,
+} from "./api-football";
+import { generateMatchEditorial, generateSummary } from "./llm";
 
 type Kind =
   | "reason"
@@ -13,21 +18,38 @@ type Kind =
   | "headline"
   | "tags"
   | "summary"
-  | "context_data";
+  | "context_data"
+  | "story"
+  | "key_battles"
+  | "tactical_hinge"
+  | "the_number";
 
 export type EnsureResult = "cached" | "generated" | "failed" | "skipped";
 
+export interface KeyBattle {
+  home: string;
+  away: string;
+  description: string;
+}
+
+export interface TheNumber {
+  value: string;
+  label: string;
+  context: string;
+}
+
 export interface MatchContentBundle {
-  reasons: string[] | null;
-  watchPoints: string[] | null;
   headline: string | null;
   tags: string[] | null;
+  story: string | null;
+  keyBattles: KeyBattle[] | null;
+  tacticalHinge: string | null;
+  theNumber: TheNumber | null;
   summary: string[] | null;
   contextData: MatchContextData | null;
 }
 
 // --- 읽기 (유저 경로) ---
-// 한 경기의 모든 컨텐츠를 1회 쿼리로 가져온다. pooler 커넥션 1개만 점유.
 export async function getMatchContent(
   match: MatchDTO,
 ): Promise<MatchContentBundle> {
@@ -45,12 +67,16 @@ export async function getMatchContent(
   for (const r of rows) byKind.set(r.kind, r.content);
 
   const headlineArr = byKind.get("headline") as string[] | undefined;
+  const storyArr = byKind.get("story") as string[] | undefined;
+  const tacticalHingeArr = byKind.get("tactical_hinge") as string[] | undefined;
 
   return {
-    reasons: (byKind.get("reason") as string[] | undefined) ?? null,
-    watchPoints: (byKind.get("watch_points") as string[] | undefined) ?? null,
     headline: headlineArr?.[0] ?? null,
     tags: (byKind.get("tags") as string[] | undefined) ?? null,
+    story: storyArr?.[0] ?? null,
+    keyBattles: (byKind.get("key_battles") as KeyBattle[] | undefined) ?? null,
+    tacticalHinge: tacticalHingeArr?.[0] ?? null,
+    theNumber: (byKind.get("the_number") as TheNumber | undefined) ?? null,
     summary: (byKind.get("summary") as string[] | undefined) ?? null,
     contextData:
       (byKind.get("context_data") as MatchContextData | undefined) ?? null,
@@ -71,17 +97,23 @@ async function upsertKind(
   });
 }
 
-// headline + tags + reasons + watchPoints 한 번에 (Claude 1회 호출).
-export async function ensureMatchMeta(
+// headline + tags + story + keyBattles + tacticalHinge + theNumber 한 번에 (Claude 1회 호출).
+export async function ensureMatchEditorial(
   match: MatchDTO,
 ): Promise<EnsureResult> {
   try {
-    const [r, w, h, t] = await Promise.all([
+    const [story, battles, hinge, number, headline, tags] = await Promise.all([
       prisma.matchContent.findUnique({
-        where: { matchId_kind: { matchId: match.id, kind: "reason" } },
+        where: { matchId_kind: { matchId: match.id, kind: "story" } },
       }),
       prisma.matchContent.findUnique({
-        where: { matchId_kind: { matchId: match.id, kind: "watch_points" } },
+        where: { matchId_kind: { matchId: match.id, kind: "key_battles" } },
+      }),
+      prisma.matchContent.findUnique({
+        where: { matchId_kind: { matchId: match.id, kind: "tactical_hinge" } },
+      }),
+      prisma.matchContent.findUnique({
+        where: { matchId_kind: { matchId: match.id, kind: "the_number" } },
       }),
       prisma.matchContent.findUnique({
         where: { matchId_kind: { matchId: match.id, kind: "headline" } },
@@ -90,27 +122,29 @@ export async function ensureMatchMeta(
         where: { matchId_kind: { matchId: match.id, kind: "tags" } },
       }),
     ]);
-    if (r && w && h && t) return "cached";
+    if (story && battles && hinge && number && headline && tags) return "cached";
   } catch (err) {
-    console.error("[content] DB read failed (ensureMatchMeta)", err);
+    console.error("[content] DB read failed (ensureMatchEditorial)", err);
   }
 
   try {
-    const meta = await generateMatchMeta(match);
+    const editorial = await generateMatchEditorial(match);
     await Promise.all([
-      upsertKind(match.id, "reason", meta.reasons),
-      upsertKind(match.id, "watch_points", meta.watchPoints),
-      upsertKind(match.id, "headline", [meta.headline]),
-      upsertKind(match.id, "tags", meta.tags),
+      upsertKind(match.id, "story", [editorial.story]),
+      upsertKind(match.id, "key_battles", editorial.keyBattles),
+      upsertKind(match.id, "tactical_hinge", [editorial.tacticalHinge]),
+      upsertKind(match.id, "the_number", editorial.theNumber),
+      upsertKind(match.id, "headline", [editorial.headline]),
+      upsertKind(match.id, "tags", editorial.tags),
     ]);
     return "generated";
   } catch (err) {
-    console.error("[content] ensureMatchMeta failed", match.id, err);
+    console.error("[content] ensureMatchEditorial failed", match.id, err);
     return "failed";
   }
 }
 
-// 폼 + 순위 데이터 저장 (football-data, Claude 아님).
+// 폼 + 순위 + 선수 + 팀 통계 저장 (football-data + API-Football, Claude 아님).
 export async function ensureContextData(
   match: MatchDTO,
 ): Promise<EnsureResult> {
@@ -141,6 +175,18 @@ export async function ensureContextData(
     const homePlayers = filterTeamPlayers(allPlayers, match.homeTeam.name);
     const awayPlayers = filterTeamPlayers(allPlayers, match.awayTeam.name);
 
+    const homeTeamId = findTeamId(allPlayers, match.homeTeam.name);
+    const awayTeamId = findTeamId(allPlayers, match.awayTeam.name);
+
+    const [homeStats, awayStats] = await Promise.all([
+      homeTeamId
+        ? fetchTeamStatistics(homeTeamId, match.leagueCode).catch(() => null)
+        : null,
+      awayTeamId
+        ? fetchTeamStatistics(awayTeamId, match.leagueCode).catch(() => null)
+        : null,
+    ]);
+
     const data: MatchContextData = {
       homeForm: homeForm.map((f) => f.result),
       awayForm: awayForm.map((f) => f.result),
@@ -160,6 +206,8 @@ export async function ensureContextData(
         : undefined,
       homeTopPlayers: homePlayers.length > 0 ? homePlayers : undefined,
       awayTopPlayers: awayPlayers.length > 0 ? awayPlayers : undefined,
+      homeStats: homeStats ?? undefined,
+      awayStats: awayStats ?? undefined,
     };
 
     await upsertKind(match.id, "context_data", data);

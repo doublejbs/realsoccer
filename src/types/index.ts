@@ -38,13 +38,25 @@ export interface MatchBundle {
   score?: number;
 }
 
+export interface TeamStatistics {
+  goalsForAvg: number;
+  goalsAgainstAvg: number;
+  cleanSheets: number;
+  homeWins: number;
+  homePlayed: number;
+  awayWins: number;
+  awayPlayed: number;
+}
+
 export interface MatchContextData {
   homeForm: ("W" | "D" | "L")[];
   awayForm: ("W" | "D" | "L")[];
   homeStanding?: { position: number; points: number; played: number };
   awayStanding?: { position: number; points: number; played: number };
-  homeTopPlayers?: { name: string; goals: number; assists: number; rating: number | null }[];
-  awayTopPlayers?: { name: string; goals: number; assists: number; rating: number | null }[];
+  homeTopPlayers?: { name: string; goals: number; assists: number; rating: number | null; position?: string }[];
+  awayTopPlayers?: { name: string; goals: number; assists: number; rating: number | null; position?: string }[];
+  homeStats?: TeamStatistics;
+  awayStats?: TeamStatistics;
 }
 
 export interface UserPreferencesDTO {

@@ -142,13 +142,13 @@ async function RecentFinishedSection() {
 }
 
 async function TopMatchContent({ match, href }: { match: MatchDTO; href: string }) {
-  const { reasons, headline, tags } = await getMatchContent(match);
+  const { headline, tags, story } = await getMatchContent(match);
   return (
     <MatchHero
       match={match}
       headline={headline}
       tags={tags}
-      reasonLead={reasons?.[0]}
+      reasonLead={story ?? undefined}
       href={href}
     />
   );

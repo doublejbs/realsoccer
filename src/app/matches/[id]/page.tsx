@@ -12,6 +12,7 @@ import {
 import { requireUser } from "@/lib/auth";
 import { getMatchById } from "@/services/matches";
 import { getMatchContent } from "@/services/content";
+import type { KeyBattle, TheNumber } from "@/services/content";
 import type { MatchContextData } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -79,11 +80,9 @@ export default async function MatchDetailPage({
   const match = await getMatchById(params.id);
   if (!match) notFound();
 
-  const { reasons, watchPoints, headline, tags, contextData, summary } =
+  const { headline, tags, story, keyBattles, tacticalHinge, theNumber, contextData, summary } =
     await getMatchContent(match);
 
-  const sectionIndex = { reasons: "01", watchPoints: "02", summary: "03" };
-  // 종료 경기가 아니면 summary는 설령 DB에 있더라도 표시하지 않음.
   const hasSummary = match.status === "FINISHED" && !!summary;
 
   return (
@@ -109,7 +108,7 @@ export default async function MatchDetailPage({
           <MatchHero match={match} headline={headline} tags={tags} />
         </div>
 
-        {/* 폼 + 순위 컨텍스트 */}
+        {/* 팀 현황 — 폼 + 순위 + 주목 선수 */}
         {contextData && (
           <Section title="팀 현황" index="00" delay="rise-2">
             <TeamContextRow
@@ -120,43 +119,47 @@ export default async function MatchDetailPage({
           </Section>
         )}
 
-        {reasons && (
-          <Section title="보는 이유" index={sectionIndex.reasons} delay="rise-2">
-            <ol className="hairline-y">
-              {reasons.map((r, i) => (
-                <li key={i} className="flex items-start gap-4 py-4">
-                  <span className="mt-1 font-mono text-[10px] text-accent">
-                    {String(i + 1).padStart(2, "0")}
-                  </span>
-                  <p className="flex-1 text-pretty font-display text-lg leading-snug text-ink sm:text-xl">
-                    {r}
-                  </p>
-                </li>
-              ))}
-            </ol>
+        {/* The Story */}
+        {story && (
+          <Section title="The Story" index="01" delay="rise-2">
+            <p className="text-pretty font-display text-lg leading-relaxed text-ink-dim sm:text-xl">
+              {story}
+            </p>
           </Section>
         )}
 
-        {watchPoints && (
-          <Section title="관전 포인트" index={sectionIndex.watchPoints} delay="rise-3">
-            <ul className="grid gap-3">
-              {watchPoints.map((w, i) => (
-                <li
-                  key={i}
-                  className="relative border border-hairline bg-surface p-4 pl-14"
-                >
-                  <span className="absolute left-3 top-3 font-display text-3xl font-semibold italic leading-none text-accent">
-                    {i + 1}
-                  </span>
-                  <p className="text-sm leading-relaxed text-ink-dim">{w}</p>
-                </li>
+        {/* Key Battle */}
+        {keyBattles && keyBattles.length > 0 && (
+          <Section title="Key Battle" index="02" delay="rise-3">
+            <div className="flex flex-col gap-4">
+              {keyBattles.map((b, i) => (
+                <KeyBattleCard key={i} battle={b} />
               ))}
-            </ul>
+            </div>
           </Section>
         )}
 
+        {/* Tactical Hinge */}
+        {tacticalHinge && (
+          <Section title="Tactical Hinge" index="03" delay="rise-3">
+            <blockquote className="border-l-2 border-accent pl-4">
+              <p className="font-display text-lg leading-snug text-ink sm:text-xl">
+                {tacticalHinge}
+              </p>
+            </blockquote>
+          </Section>
+        )}
+
+        {/* The Number */}
+        {theNumber && (
+          <Section title="The Number" index="04" delay="rise-4">
+            <TheNumberCard number={theNumber} />
+          </Section>
+        )}
+
+        {/* 5줄 요약 (종료 경기만) */}
         {hasSummary && summary && (
-          <Section title="5줄 요약" index={sectionIndex.summary} delay="rise-4">
+          <Section title="5줄 요약" index="05" delay="rise-4">
             <ol className="hairline-y border-l-2 border-accent pl-4">
               {summary.map((s, i) => (
                 <li
@@ -182,6 +185,47 @@ export default async function MatchDetailPage({
           <span>{match.status}</span>
         </div>
       </main>
+    </div>
+  );
+}
+
+// --- Sub-components ---
+
+function KeyBattleCard({ battle }: { battle: KeyBattle }) {
+  return (
+    <div className="relative border border-hairline bg-surface p-4">
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+        <span className="font-display text-base font-semibold text-ink leading-tight">
+          {battle.home}
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.15em] text-accent shrink-0">
+          vs
+        </span>
+        <span className="font-display text-base font-semibold text-ink leading-tight text-right">
+          {battle.away}
+        </span>
+      </div>
+      <p className="mt-3 text-sm leading-relaxed text-ink-dim border-t border-hairline pt-3">
+        {battle.description}
+      </p>
+    </div>
+  );
+}
+
+function TheNumberCard({ number }: { number: TheNumber }) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-baseline gap-3">
+        <span className="font-display text-[clamp(3rem,12vw,5rem)] font-semibold leading-none tracking-tighter text-accent tabular-nums">
+          {number.value}
+        </span>
+        <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-ink-mute">
+          {number.label}
+        </span>
+      </div>
+      <p className="text-sm leading-relaxed text-ink-dim border-t border-hairline pt-3">
+        {number.context}
+      </p>
     </div>
   );
 }
@@ -255,7 +299,7 @@ function PlayerList({
   players,
   side,
 }: {
-  players?: { name: string; goals: number; assists: number; rating: number | null }[];
+  players?: { name: string; goals: number; assists: number; rating: number | null; position?: string }[];
   side: "home" | "away";
 }) {
   if (!players?.length) return <div />;

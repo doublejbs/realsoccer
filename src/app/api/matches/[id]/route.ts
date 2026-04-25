@@ -13,15 +13,17 @@ export async function GET(
   const match = await getMatchById(params.id);
   if (!match) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  const { reasons, watchPoints, headline, tags, contextData, summary } =
+  const { headline, tags, story, keyBattles, tacticalHinge, theNumber, contextData, summary } =
     await getMatchContent(match);
 
   return NextResponse.json({
     match,
-    reasons,
-    watchPoints,
     headline,
     tags,
+    story,
+    keyBattles,
+    tacticalHinge,
+    theNumber,
     contextData,
     summary,
   });

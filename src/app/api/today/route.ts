@@ -12,14 +12,16 @@ export async function GET() {
   const top = pickTopMatch(matches, user.preferences ?? null);
   if (!top) return NextResponse.json({ match: null });
 
-  const { reasons, watchPoints, headline, tags } = await getMatchContent(top.match);
+  const { headline, tags, story, keyBattles, tacticalHinge, theNumber } = await getMatchContent(top.match);
 
   return NextResponse.json({
     match: top.match,
-    reasons,
-    watchPoints,
     headline,
     tags,
+    story,
+    keyBattles,
+    tacticalHinge,
+    theNumber,
     score: top.score,
   });
 }

@@ -33,8 +33,6 @@ export interface MatchDTO {
 
 export interface MatchBundle {
   match: MatchDTO;
-  reasons: string[];
-  watchPoints: string[];
   score?: number;
 }
 
